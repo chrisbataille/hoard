@@ -1,6 +1,6 @@
 [package]
 name = "hoard"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 description = "A tool management system with SQLite database and AI-assisted discovery"
 authors = ["Chris Bataille"]
