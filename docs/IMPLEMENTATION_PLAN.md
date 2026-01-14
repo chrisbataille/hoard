@@ -17,7 +17,7 @@ Transform hoard from a CLI tool tracker into the **AI-powered developer tool man
 
 | Phase | Focus | Duration | Status |
 |-------|-------|----------|--------|
-| 1 | CLI Simplification | 2-3 weeks | 🔲 Not Started |
+| 1 | CLI Simplification | 2-3 weeks | ✅ Complete |
 | 2 | AI Enhancements | 2-3 weeks | 🔲 Not Started |
 | 3 | TUI MVP | 4-6 weeks | 🔲 Not Started |
 | 4 | TUI Polish | 2-3 weeks | 🔲 Not Started |
@@ -50,13 +50,13 @@ hoard sync --dry-run          # Preview changes
 ```
 
 **Tasks:**
-- [ ] Add `--scan` flag to sync command
-- [ ] Add `--github` flag to sync command
-- [ ] Add `--usage` flag to sync command
-- [ ] Add `--all` flag combining all operations
-- [ ] Deprecate standalone `scan` (keep as alias for 1 version)
-- [ ] Deprecate `fetch-descriptions` (merge into sync)
-- [ ] Update help text and documentation
+- [x] Add `--scan` flag to sync command
+- [x] Add `--github` flag to sync command
+- [x] Add `--usage` flag to sync command
+- [x] Add `--all` flag combining all operations
+- [x] Deprecate standalone `scan` (keep as alias for 1 version)
+- [x] Deprecate `fetch-descriptions` (merge into sync)
+- [x] Update help text and documentation
 
 ---
 
@@ -85,16 +85,16 @@ hoard discover recommended          # Absorbs `recommend`
 ```
 
 **Tasks:**
-- [ ] Create `discover` command group in cli.rs
-- [ ] Move `list` to `discover list` (keep alias)
-- [ ] Move `search` to `discover search` (keep alias)
-- [ ] Move `categories` to `discover categories`
-- [ ] Move `labels` to `discover labels`
-- [ ] Move `suggest` to `discover missing`
-- [ ] Move `recommend` to `discover recommended`
-- [ ] Implement `discover similar <tool>` (same category + labels)
-- [ ] Implement `discover trending` (top GitHub stars)
-- [ ] Merge `gh search` into `discover search --github`
+- [x] Create `discover` command group in cli.rs
+- [x] Move `list` to `discover list` (keep alias)
+- [x] Move `search` to `discover search` (keep alias)
+- [x] Move `categories` to `discover categories`
+- [x] Move `labels` to `discover labels`
+- [x] Move `suggest` to `discover missing`
+- [x] Move `recommend` to `discover recommended`
+- [x] Implement `discover similar <tool>` (same category + labels)
+- [x] Implement `discover trending` (top GitHub stars)
+- [x] Merge `gh search` into `discover search --github`
 
 ---
 
@@ -120,13 +120,13 @@ hoard insights stats            # Absorbs `stats` + `info`
 ```
 
 **Tasks:**
-- [ ] Create `insights` command group in cli.rs
-- [ ] Implement `insights` overview (combined stats)
-- [ ] Move `usage show` to `insights usage`
-- [ ] Move `usage tool` to `insights usage <tool>`
-- [ ] Move `unused` to `insights unused`
-- [ ] Merge `doctor` + `stats` + `info` into `insights health`
-- [ ] Deprecate standalone commands (keep aliases for 1 version)
+- [x] Create `insights` command group in cli.rs
+- [x] Implement `insights` overview (combined stats)
+- [x] Move `usage show` to `insights usage`
+- [x] Move `usage tool` to `insights usage <tool>`
+- [x] Move `unused` to `insights unused`
+- [x] Merge `doctor` + `stats` + `info` into `insights health`
+- [x] Deprecate standalone commands (keep aliases for 1 version)
 
 ---
 
@@ -158,11 +158,11 @@ hoard ai enrich --dry-run           # Preview changes
 ```
 
 **Tasks:**
-- [ ] Create `ai config` subcommand group
-- [ ] Move `ai set/show/test` to `ai config set/show/test`
-- [ ] Create `ai enrich` with flags
-- [ ] Deprecate `ai categorize` and `ai describe` (suggest new commands)
-- [ ] Move `ai suggest-bundle` to Phase 2 (AI enhancements)
+- [x] Create `ai config` subcommand group
+- [x] Move `ai set/show/test` to `ai config set/show/test`
+- [x] Create `ai enrich` with flags
+- [x] Deprecate `ai categorize` and `ai describe` (suggest new commands)
+- [x] Move `ai suggest-bundle` to Phase 2 (AI enhancements)
 
 ---
 
@@ -197,11 +197,11 @@ hoard cleanup
 ```
 
 **Tasks:**
-- [ ] Implement `init` command with interactive wizard
-- [ ] Implement `maintain` command with `--auto` flag
-- [ ] Implement `cleanup` command with confirmations
-- [ ] Add progress indicators for multi-step operations
-- [ ] Update Fish completions for new commands
+- [x] Implement `init` command with interactive wizard
+- [x] Implement `maintain` command with `--auto` flag
+- [x] Implement `cleanup` command with confirmations
+- [x] Add progress indicators for multi-step operations
+- [x] Update Fish completions for new commands
 
 ---
 
@@ -230,12 +230,12 @@ hoard gh backfill                # Fill from cache
 ```
 
 **Tasks:**
-- [ ] Add GitHub info to `show` command output
-- [ ] Add `--github` flag to `sync`
-- [ ] Add `--github` flag to `discover search`
-- [ ] Add rate limit to `insights health`
-- [ ] Deprecate `gh sync`, `gh search`, `gh info`, `gh rate-limit`
-- [ ] Keep `gh fetch` and `gh backfill` for advanced use
+- [x] Add GitHub info to `show` command output
+- [x] Add `--github` flag to `sync`
+- [x] Add `--github` flag to `discover search`
+- [x] Add rate limit to `insights health`
+- [x] Deprecate `gh sync`, `gh search`, `gh info`, `gh rate-limit`
+- [x] Keep `gh fetch` and `gh backfill` for advanced use
 
 ---
 
@@ -245,8 +245,8 @@ hoard gh backfill                # Fill from cache
 - [ ] Update USER_GUIDE.md with new command structure
 - [ ] Update API.md with new exports
 - [ ] Update README.md quick start
-- [ ] Rewrite Fish completions for new structure
-- [ ] Add deprecation warnings for old commands
+- [x] Rewrite Fish completions for new structure
+- [x] Add deprecation warnings for old commands
 - [ ] Create migration guide for existing users
 
 ---
@@ -612,10 +612,10 @@ src/tui/
 ## Success Metrics
 
 ### Phase 1
-- [ ] Command count reduced from 27 to ~15
-- [ ] All commands have `--help` with examples
-- [ ] Fish completions fully updated
-- [ ] No breaking changes (aliases work)
+- [x] Command count reduced from 27 to ~15
+- [x] All commands have `--help` with examples
+- [x] Fish completions fully updated
+- [x] No breaking changes (aliases work)
 
 ### Phase 2
 - [ ] AI extraction works for 90%+ of GitHub repos
@@ -640,8 +640,9 @@ src/tui/
 - [ ] Add integration tests for new commands
 - [ ] Update all documentation
 - [ ] Remove deprecated code after 1 version
-- [ ] Ensure 0 clippy warnings maintained
-- [ ] Keep test count growing (currently 104)
+- [x] Ensure 0 clippy warnings maintained
+- [x] Keep test count growing (currently 109)
+- [x] Pre-commit hooks for code quality
 
 ---
 
