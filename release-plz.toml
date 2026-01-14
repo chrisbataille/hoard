@@ -1,36 +1,9 @@
 [workspace]
-# Create a single PR for all packages (we only have one)
-pr_draft = false
-
 # Use conventional commits to determine version bumps
 # feat: -> minor, fix: -> patch, BREAKING CHANGE: -> major
 changelog_update = true
 
-# PR configuration
-pr_name = "chore: release v{{ version }}"
-pr_body = """
-## Release v{{ version }}
-
-This PR was automatically created by [release-plz](https://release-plz.dev).
-
-### Changes
-{{ changelog }}
-
----
-Merge this PR to create a GitHub release and publish to crates.io (if configured).
-"""
-
 [changelog]
-# Changelog generation settings
-body = """
-{% for group, commits in commits | group_by(attribute="group") %}
-### {{ group | upper_first }}
-{% for commit in commits %}
-- {{ commit.message | upper_first }} ({{ commit.id | truncate(length=7, end="") }})
-{% endfor %}
-{% endfor %}
-"""
-
 # Group commits by type
 commit_parsers = [
     { message = "^feat", group = "Features" },
@@ -41,9 +14,4 @@ commit_parsers = [
     { message = "^style", group = "Style" },
     { message = "^test", group = "Testing" },
     { message = "^chore", group = "Miscellaneous" },
-]
-
-# Link PR numbers to GitHub
-commit_preprocessors = [
-    { pattern = "\\(#([0-9]+)\\)", replace = "([#${1}](https://github.com/chrisbataille/hoard/pull/${1}))" },
 ]
