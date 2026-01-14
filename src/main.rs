@@ -1,5 +1,6 @@
 use anyhow::Result;
-use clap::Parser;
+use clap::{CommandFactory, Parser};
+use clap_complete::generate;
 use colored::Colorize;
 
 use std::collections::HashSet;
@@ -143,6 +144,11 @@ fn main() -> Result<()> {
         Commands::Import { file, skip_existing, dry_run } => cmd_import(&db, &file, skip_existing, dry_run),
         Commands::Doctor { fix } => cmd_doctor(&db, fix),
         Commands::Edit { name } => cmd_edit(&db, &name),
+        Commands::Completions { shell } => {
+            let mut cmd = hoard::Cli::command();
+            generate(shell, &mut cmd, "hoard", &mut std::io::stdout());
+            Ok(())
+        }
     }
 }
 

@@ -9,6 +9,7 @@ license = "MIT"
 [dependencies]
 # CLI
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
 
 # Database
 rusqlite = { version = "0.32", features = ["bundled"] }
