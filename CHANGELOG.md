@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3](https://github.com/chrisbataille/hoards/compare/v0.1.2...v0.1.3) - 2026-01-14
+
+### Bug Fixes
+
+- correct CLI name from hoard to hoards ([#4](https://github.com/chrisbataille/hoards/pull/4))
+
+### Features
+
+- add pre-commit hooks for code quality ([#5](https://github.com/chrisbataille/hoards/pull/5))
+
 ## [0.1.2] - 2025-01-14
 
 ### Added
