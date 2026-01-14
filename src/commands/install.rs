@@ -248,7 +248,7 @@ pub fn cmd_install(
         println!("{} '{}' is already installed", "!".yellow(), name);
         println!(
             "  Use {} to update it",
-            format!("hoard upgrade {}", name).cyan()
+            format!("hoards upgrade {}", name).cyan()
         );
         return Ok(());
     }
@@ -263,7 +263,7 @@ pub fn cmd_install(
         // Tool not in database, need source argument
         println!("{} Tool '{}' not in database", "!".yellow(), name);
         println!(
-            "  Specify a source with: hoard install {} --source <cargo|pip|npm|apt|brew|snap>",
+            "  Specify a source with: hoards install {} --source <cargo|pip|npm|apt|brew|snap>",
             name
         );
         return Ok(());
@@ -343,7 +343,7 @@ pub fn cmd_uninstall(db: &Database, name: &str, remove_from_db: bool, force: boo
         Some(t) => t,
         None => {
             println!("Tool '{}' not found in database.", name);
-            println!("  Add it first with: hoard add {} --source <source>", name);
+            println!("  Add it first with: hoards add {} --source <source>", name);
             return Ok(());
         }
     };
@@ -429,7 +429,7 @@ pub fn cmd_upgrade(
         Some(t) => t,
         None => {
             println!(
-                "Tool '{}' not found in database. Run 'hoard scan' first.",
+                "Tool '{}' not found in database. Run 'hoards scan' first.",
                 name
             );
             return Ok(());

@@ -6,8 +6,8 @@ use colored::Colorize;
 use std::collections::HashSet;
 use std::thread;
 
-use hoard::sources::ManualSource;
-use hoard::{
+use hoards::sources::ManualSource;
+use hoards::{
     AiCommands, AiConfigCommands, BundleCommands, Cli, Commands, ConfigCommands, Database,
     DiscoverCommands, GhCommands, InsightsCommands, InstallSource, KNOWN_TOOLS, Tool,
     UsageCommands, all_sources, cmd_ai_categorize, cmd_ai_describe, cmd_ai_set, cmd_ai_show,
@@ -312,7 +312,7 @@ fn main() -> Result<()> {
         // SHELL COMPLETIONS
         // ============================================
         Commands::Completions { shell } => {
-            let mut cmd = hoard::Cli::command();
+            let mut cmd = hoards::Cli::command();
             generate(shell, &mut cmd, "hoard", &mut std::io::stdout());
             Ok(())
         }
@@ -598,7 +598,7 @@ fn cmd_sync_status(db: &Database, dry_run: bool) -> Result<()> {
     let tools = db.list_tools(false, None)?;
 
     if tools.is_empty() {
-        println!("No tools in database. Run 'hoard sync --scan' first.");
+        println!("No tools in database. Run 'hoards sync --scan' first.");
         return Ok(());
     }
 
@@ -1009,7 +1009,7 @@ fn cmd_trending(db: &Database, category: Option<String>, limit: usize) -> Result
 
     if tools_with_stars.is_empty() {
         println!("No tools with GitHub star data found.");
-        println!("Run 'hoard sync --github' to fetch star counts.");
+        println!("Run 'hoards sync --github' to fetch star counts.");
         return Ok(());
     }
 
@@ -1108,7 +1108,7 @@ fn cmd_overview(db: &Database) -> Result<()> {
     tools_with_usage.sort_by(|a, b| b.1.cmp(&a.1));
 
     if tools_with_usage.is_empty() {
-        println!("   (no usage data - run 'hoard sync --usage')");
+        println!("   (no usage data - run 'hoards sync --usage')");
     } else {
         for (name, count) in tools_with_usage.iter().take(5) {
             println!("   {:20} {} uses", name, count.to_string().cyan());
@@ -1132,7 +1132,7 @@ fn cmd_overview(db: &Database) -> Result<()> {
     let missing_desc: usize = tools.iter().filter(|t| t.description.is_none()).count();
     if missing_desc > 0 {
         println!(
-            "   {} tools missing descriptions (run 'hoard sync --descriptions')",
+            "   {} tools missing descriptions (run 'hoards sync --descriptions')",
             missing_desc.to_string().yellow()
         );
     } else {
@@ -1142,7 +1142,7 @@ fn cmd_overview(db: &Database) -> Result<()> {
     let uncategorized: usize = tools.iter().filter(|t| t.category.is_none()).count();
     if uncategorized > 0 {
         println!(
-            "   {} tools uncategorized (run 'hoard ai enrich --categorize')",
+            "   {} tools uncategorized (run 'hoards ai enrich --categorize')",
             uncategorized.to_string().yellow()
         );
     } else {
@@ -1208,12 +1208,12 @@ fn cmd_init(db: &Database, auto: bool) -> Result<()> {
     println!("{}", "═══════════════════════════════════════".green());
     println!();
     println!("Next steps:");
-    println!("  {} - see overview", "hoard insights overview".cyan());
+    println!("  {} - see overview", "hoards insights overview".cyan());
     println!(
         "  {} - find tools you're missing",
-        "hoard discover missing".cyan()
+        "hoards discover missing".cyan()
     );
-    println!("  {} - keep things up to date", "hoard maintain".cyan());
+    println!("  {} - keep things up to date", "hoards maintain".cyan());
 
     Ok(())
 }
@@ -1346,7 +1346,7 @@ fn cmd_updates(
     tracked: bool,
     all_versions: bool,
 ) -> Result<()> {
-    use hoard::updates::*;
+    use hoards::updates::*;
 
     if cross {
         return cmd_updates_cross(db);
@@ -1426,7 +1426,7 @@ fn cmd_updates_tracked(
     source_filter: Option<String>,
     all_versions: bool,
 ) -> Result<()> {
-    use hoard::updates::*;
+    use hoards::updates::*;
 
     println!(
         "{} Checking tracked tools for updates{}...\n",
@@ -1523,7 +1523,7 @@ fn cmd_updates_tracked(
         if all_versions {
             println!(
                 "  Use {} to install a specific version",
-                "hoard upgrade <tool> --version <ver>".cyan()
+                "hoards upgrade <tool> --version <ver>".cyan()
             );
         }
     }
@@ -1532,7 +1532,7 @@ fn cmd_updates_tracked(
 }
 
 fn cmd_updates_cross(db: &Database) -> Result<()> {
-    use hoard::updates::*;
+    use hoards::updates::*;
 
     println!(
         "{} Checking apt/snap tools for newer versions on other sources...\n",

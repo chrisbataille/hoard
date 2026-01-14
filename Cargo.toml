@@ -1,12 +1,12 @@
 [package]
-name = "hoard"
+name = "hoards"
 version = "0.1.2"
 edition = "2024"
 description = "A tool management system with SQLite database and AI-assisted discovery"
 authors = ["Chris Bataille"]
 license = "MIT"
-repository = "https://github.com/chrisbataille/hoard"
-homepage = "https://github.com/chrisbataille/hoard"
+repository = "https://github.com/chrisbataille/hoards"
+homepage = "https://github.com/chrisbataille/hoards"
 
 [dependencies]
 # CLI

@@ -22,7 +22,7 @@ pub fn cmd_bundle_create(
         println!("{} Bundle '{}' already exists", "!".yellow(), name);
         println!(
             "  Use {} to add tools",
-            format!("hoard bundle add {} <tools>", name).cyan()
+            format!("hoards bundle add {} <tools>", name).cyan()
         );
         return Ok(());
     }

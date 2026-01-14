@@ -79,7 +79,7 @@ pub fn cmd_ai_test() -> Result<()> {
 
     if config.ai.provider == AiProvider::None {
         println!("{} No AI provider configured", "!".yellow());
-        println!("  Use {} to set one", "hoard ai set <provider>".cyan());
+        println!("  Use {} to set one", "hoards ai set <provider>".cyan());
         return Ok(());
     }
 
@@ -300,11 +300,11 @@ pub fn cmd_ai_suggest_bundle(count: usize) -> Result<()> {
     println!(
         "{} Create a bundle with: {}",
         ">".cyan(),
-        "hoard bundle create <name> -d \"description\"".yellow()
+        "hoards bundle create <name> -d \"description\"".yellow()
     );
     println!(
         "  Then add tools with: {}",
-        "hoard bundle add <bundle> <tool>".yellow()
+        "hoards bundle add <bundle> <tool>".yellow()
     );
 
     Ok(())

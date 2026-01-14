@@ -283,12 +283,12 @@ pub fn cmd_doctor(db: &Database, fix: bool) -> Result<()> {
         println!(
             "    {} Run {} to fetch from package registries",
             "?".blue(),
-            "hoard fetch-descriptions".cyan()
+            "hoards fetch-descriptions".cyan()
         );
         println!(
             "    {} Run {} to fetch from GitHub",
             "?".blue(),
-            "hoard gh sync".cyan()
+            "hoards gh sync".cyan()
         );
     } else {
         println!("  {} All tools have descriptions", "✓".green());
@@ -314,7 +314,7 @@ pub fn cmd_doctor(db: &Database, fix: bool) -> Result<()> {
         println!(
             "    {} Run {} to auto-categorize",
             "?".blue(),
-            "hoard ai categorize".cyan()
+            "hoards ai categorize".cyan()
         );
     } else {
         println!("  {} All tools have categories", "✓".green());
@@ -422,7 +422,7 @@ pub fn cmd_doctor(db: &Database, fix: bool) -> Result<()> {
             println!(
                 "  {} Run {} to auto-fix some issues",
                 "?".blue(),
-                "hoard doctor --fix".cyan()
+                "hoards doctor --fix".cyan()
             );
         }
     }

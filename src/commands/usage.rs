@@ -13,7 +13,7 @@ pub fn cmd_labels(db: &Database) -> Result<()> {
 
     if label_counts.is_empty() {
         println!("{} No labels found", "!".yellow());
-        println!("  Sync with GitHub: {}", "hoard gh sync".cyan());
+        println!("  Sync with GitHub: {}", "hoards gh sync".cyan());
         return Ok(());
     }
 
@@ -31,7 +31,7 @@ pub fn cmd_labels(db: &Database) -> Result<()> {
     println!(
         "{} List tools by label: {}",
         ">".cyan(),
-        "hoard list --label <label>".yellow()
+        "hoards list --label <label>".yellow()
     );
 
     Ok(())
@@ -156,7 +156,7 @@ pub fn cmd_usage_show(db: &Database, limit: usize) -> Result<()> {
         println!(
             "{} No usage data yet. Run {} first.",
             "!".yellow(),
-            "hoard usage scan".cyan()
+            "hoards usage scan".cyan()
         );
         return Ok(());
     }
@@ -214,7 +214,7 @@ pub fn cmd_usage_tool(db: &Database, name: &str) -> Result<()> {
         }
         None => {
             println!("{} No usage data for '{}'", "!".yellow(), name);
-            println!("  Run {} to scan shell history", "hoard usage scan".cyan());
+            println!("  Run {} to scan shell history", "hoards usage scan".cyan());
         }
     }
 
@@ -229,7 +229,7 @@ pub fn cmd_unused(db: &Database) -> Result<()> {
         println!("{} All installed tools have been used!", "+".green());
         println!(
             "  Run {} first if you haven't already",
-            "hoard usage scan".cyan()
+            "hoards usage scan".cyan()
         );
         return Ok(());
     }
@@ -257,7 +257,7 @@ pub fn cmd_unused(db: &Database) -> Result<()> {
     );
     println!(
         "  Consider uninstalling with: {}",
-        "hoard uninstall <tool>".cyan()
+        "hoards uninstall <tool>".cyan()
     );
 
     Ok(())
@@ -271,7 +271,7 @@ pub fn cmd_recommend(db: &Database, count: usize) -> Result<()> {
         println!(
             "{} No usage data yet. Run {} first.",
             "!".yellow(),
-            "hoard usage scan".cyan()
+            "hoards usage scan".cyan()
         );
         return Ok(());
     }
@@ -347,7 +347,7 @@ pub fn cmd_recommend(db: &Database, count: usize) -> Result<()> {
     println!(
         "{} Install with: {}",
         ">".cyan(),
-        "hoard install <tool>".yellow()
+        "hoards install <tool>".yellow()
     );
 
     Ok(())

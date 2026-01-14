@@ -85,7 +85,7 @@ impl HoardConfig {
     pub fn config_path() -> Result<PathBuf> {
         let config_dir = dirs::config_dir()
             .context("Could not determine config directory")?
-            .join("hoard");
+            .join("hoards");
 
         Ok(config_dir.join("config.toml"))
     }

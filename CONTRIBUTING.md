@@ -1,6 +1,6 @@
-# Contributing to Hoard
+# Contributing to Hoards
 
-Thank you for your interest in contributing to Hoard! This document outlines our development workflow and guidelines.
+Thank you for your interest in contributing to Hoards! This document outlines our development workflow and guidelines.
 
 ## Git Branching Strategy
 
@@ -148,7 +148,7 @@ Before submitting a PR, ensure:
 - [ ] All tests pass: `cargo test`
 - [ ] No clippy warnings: `cargo clippy`
 - [ ] Code is formatted: `cargo fmt`
-- [ ] Fish completions updated (if CLI changed): `shell/fish/completions/hoard.fish`
+- [ ] Fish completions updated (if CLI changed): `shell/fish/completions/hoards.fish`
 - [ ] Commit messages follow convention
 - [ ] PR description explains the change
 
@@ -167,8 +167,8 @@ We use squash merging to keep `develop` and `main` history clean. The PR title b
 
 ```bash
 # Clone and setup
-git clone https://github.com/YOUR_USERNAME/hoard.git
-cd hoard
+git clone https://github.com/YOUR_USERNAME/hoards.git
+cd hoards
 
 # Ensure you're on develop for new work
 git checkout develop

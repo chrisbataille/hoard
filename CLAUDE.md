@@ -1,8 +1,8 @@
-# CLAUDE.md - Hoard Project
+# CLAUDE.md - Hoards Project
 
 ## Overview
 
-Hoard is an AI-powered CLI tool manager with usage analytics, multi-source tracking, and config management.
+Hoards is an AI-powered CLI tool manager with usage analytics, multi-source tracking, and config management.
 
 **Tagline:** *"Know what you use. Discover what you need."*
 
@@ -19,7 +19,7 @@ cargo install --path .
 ### Pre-Commit Checklist
 1. Run `cargo test` - all tests must pass
 2. Run `cargo clippy` - 0 warnings
-3. Update Fish completions if CLI changed: `shell/fish/completions/hoard.fish`
+3. Update Fish completions if CLI changed: `shell/fish/completions/hoards.fish`
 
 ### Git Workflow
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for branching strategy and commit conventions.

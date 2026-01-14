@@ -5,7 +5,7 @@ use clap_complete::Shell;
 #[command(name = "hoard")]
 #[command(about = "AI-powered CLI tool manager with usage analytics and multi-source tracking")]
 #[command(version)]
-#[command(after_help = "Use 'hoard <command> --help' for more information about a command.")]
+#[command(after_help = "Use 'hoards <command> --help' for more information about a command.")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,

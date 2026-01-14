@@ -332,7 +332,7 @@ pub fn cmd_gh_fetch(db: &Database, name: &str) -> Result<()> {
         println!("{} Tool '{}' not found in database", "!".yellow(), name);
         println!(
             "  Add it first with: {}",
-            format!("hoard add {}", name).cyan()
+            format!("hoards add {}", name).cyan()
         );
         return Ok(());
     }
@@ -498,7 +498,7 @@ pub fn cmd_gh_info(db: &Database, name: &str) -> Result<()> {
             println!("{} No GitHub info cached for '{}'", "!".yellow(), name);
             println!(
                 "  Fetch it with: {}",
-                format!("hoard gh fetch {}", name).cyan()
+                format!("hoards gh fetch {}", name).cyan()
             );
         }
     }

@@ -56,7 +56,7 @@ pub fn cmd_config_link(
     // Check if config already exists
     if db.get_config_by_name(name)?.is_some() {
         bail!(
-            "Config '{}' already exists. Use 'hoard config edit' to modify it.",
+            "Config '{}' already exists. Use 'hoards config edit' to modify it.",
             name
         );
     }
@@ -93,7 +93,7 @@ pub fn cmd_config_link(
         println!("  Tool:   {}", tool_name);
     }
     println!();
-    println!("Run {} to create the symlink", "hoard config sync".cyan());
+    println!("Run {} to create the symlink", "hoards config sync".cyan());
 
     Ok(())
 }
@@ -151,7 +151,7 @@ pub fn cmd_config_list(db: &Database, broken_only: bool, format: &str) -> Result
     if configs.is_empty() {
         println!(
             "No configs managed. Use {} to add one.",
-            "hoard config link".cyan()
+            "hoards config link".cyan()
         );
         return Ok(());
     }
@@ -428,7 +428,7 @@ pub fn cmd_config_status(db: &Database) -> Result<()> {
         println!();
         println!(
             "Run {} to create missing symlinks",
-            "hoard config sync".cyan()
+            "hoards config sync".cyan()
         );
     }
 

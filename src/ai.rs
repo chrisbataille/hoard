@@ -3,7 +3,7 @@
 //! Provides functions to invoke configured AI CLI tools (claude, gemini, codex, opencode)
 //! and parse their responses for categorization, description generation, and bundle suggestions.
 //!
-//! Prompts are loaded from `~/.config/hoard/prompts/` and can be customized by the user.
+//! Prompts are loaded from `~/.config/hoards/prompts/` and can be customized by the user.
 //! If a prompt file is missing, embedded defaults are used.
 
 use crate::config::{AiProvider, HoardConfig};
@@ -51,7 +51,7 @@ Available tools (not yet bundled):
 pub fn prompts_dir() -> Result<PathBuf> {
     let config_dir = dirs::config_dir()
         .context("Could not determine config directory")?
-        .join("hoard")
+        .join("hoards")
         .join("prompts");
     Ok(config_dir)
 }
@@ -77,7 +77,7 @@ pub fn invoke_ai(prompt: &str) -> Result<String> {
     let provider = &config.ai.provider;
 
     if *provider == AiProvider::None {
-        bail!("No AI provider configured. Run 'hoard ai set <provider>' first.");
+        bail!("No AI provider configured. Run 'hoards ai set <provider>' first.");
     }
 
     let cmd_name = provider

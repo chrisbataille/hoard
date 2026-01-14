@@ -31,7 +31,7 @@ fn tool_from_row(row: &rusqlite::Row) -> rusqlite::Result<Tool> {
     })
 }
 
-/// Database wrapper for hoard
+/// Database wrapper for hoards
 pub struct Database {
     conn: Connection,
 }
@@ -65,10 +65,10 @@ impl Database {
 
     /// Get the database file path
     pub fn db_path() -> Result<PathBuf> {
-        let proj_dirs = ProjectDirs::from("dev", "hoard", "hoard")
+        let proj_dirs = ProjectDirs::from("dev", "hoards", "hoards")
             .context("Failed to determine project directories")?;
 
-        Ok(proj_dirs.data_dir().join("hoard.db"))
+        Ok(proj_dirs.data_dir().join("hoards.db"))
     }
 
     /// Initialize the database schema
