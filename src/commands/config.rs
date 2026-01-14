@@ -12,11 +12,10 @@ use std::path::{Path, PathBuf};
 
 /// Expand ~ to home directory
 fn expand_path(path: &str) -> PathBuf {
-    if path.starts_with("~/") {
-        if let Some(home) = dirs::home_dir() {
+    if path.starts_with("~/")
+        && let Some(home) = dirs::home_dir() {
             return home.join(&path[2..]);
         }
-    }
     PathBuf::from(path)
 }
 
@@ -281,12 +280,10 @@ pub fn cmd_config_sync(db: &Database, dry_run: bool, force: bool) -> Result<()> 
             if force {
                 if dry_run {
                     println!("{} {} - would remove existing: {}", "!".yellow(), config.name, target_path.display());
+                } else if target_path.is_dir() && !target_path.is_symlink() {
+                    fs::remove_dir_all(&target_path)?;
                 } else {
-                    if target_path.is_dir() && !target_path.is_symlink() {
-                        fs::remove_dir_all(&target_path)?;
-                    } else {
-                        fs::remove_file(&target_path)?;
-                    }
+                    fs::remove_file(&target_path)?;
                 }
             } else {
                 println!(
@@ -301,15 +298,14 @@ pub fn cmd_config_sync(db: &Database, dry_run: bool, force: bool) -> Result<()> 
         }
 
         // Create parent directory if needed
-        if let Some(parent) = target_path.parent() {
-            if !parent.exists() {
+        if let Some(parent) = target_path.parent()
+            && !parent.exists() {
                 if dry_run {
                     println!("  Would create directory: {}", parent.display());
                 } else {
                     fs::create_dir_all(parent)?;
                 }
             }
-        }
 
         // Create symlink
         if dry_run {

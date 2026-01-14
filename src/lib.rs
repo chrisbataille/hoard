@@ -10,7 +10,10 @@ pub mod scanner;
 pub mod sources;
 pub mod updates;
 
-pub use cli::{AiCommands, BundleCommands, Cli, Commands, ConfigCommands, GhCommands, UsageCommands};
+pub use cli::{
+    AiCommands, AiConfigCommands, BundleCommands, Cli, Commands, ConfigCommands,
+    DiscoverCommands, GhCommands, InsightsCommands, UsageCommands,
+};
 pub use config::{AiProvider, HoardConfig};
 pub use db::Database;
 pub use models::{Bundle, Config, InstallSource, Interest, Tool};
