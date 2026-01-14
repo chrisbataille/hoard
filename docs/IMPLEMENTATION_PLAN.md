@@ -18,7 +18,7 @@ Transform hoard from a CLI tool tracker into the **AI-powered developer tool man
 | Phase | Focus | Duration | Status |
 |-------|-------|----------|--------|
 | 1 | CLI Simplification | 2-3 weeks | ✅ Complete |
-| 2 | AI Enhancements | 2-3 weeks | 🔲 Not Started |
+| 2 | AI Enhancements | 2-3 weeks | 🔄 In Progress (2.1 done) |
 | 3 | TUI MVP | 4-6 weeks | 🔲 Not Started |
 | 4 | TUI Polish | 2-3 weeks | 🔲 Not Started |
 
@@ -281,13 +281,13 @@ hoard ai extract https://github.com/BurntSushi/ripgrep
 5. Optionally add to database
 
 **Tasks:**
-- [ ] Create extraction prompt template
-- [ ] Implement GitHub README fetching
-- [ ] Implement AI extraction with Claude
-- [ ] Parse and validate response
-- [ ] Add interactive confirmation
-- [ ] Handle edge cases (no README, multiple install methods)
-- [ ] Cache extractions to avoid repeat API calls
+- [x] Create extraction prompt template
+- [x] Implement GitHub README fetching
+- [x] Implement AI extraction with Claude
+- [x] Parse and validate response
+- [x] Add interactive confirmation
+- [x] Handle edge cases (no README, multiple install methods)
+- [x] Cache extractions to avoid repeat API calls
 
 ---
 
