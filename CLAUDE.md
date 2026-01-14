@@ -16,10 +16,17 @@ cargo clippy
 cargo install --path .
 ```
 
-### Pre-Commit Checklist
-1. Run `cargo test` - all tests must pass
-2. Run `cargo clippy` - 0 warnings
-3. Update Fish completions if CLI changed: `shell/fish/completions/hoards.fish`
+### Pre-Commit Hooks
+Pre-commit hooks automatically run on each commit:
+```bash
+git config core.hooksPath .githooks  # Enable hooks after clone
+```
+Hooks run: `cargo fmt --check`, `cargo clippy`, `cargo test`
+
+### CI/CD
+- **CI**: GitHub Actions runs test, clippy, format on PRs
+- **Releases**: release-plz automates versioning and crates.io publishing
+- Use conventional commits: `feat:` (minor), `fix:` (patch), `feat!:` (major)
 
 ### Git Workflow
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for branching strategy and commit conventions.
