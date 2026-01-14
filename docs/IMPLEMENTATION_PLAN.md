@@ -242,12 +242,12 @@ hoard gh backfill                # Fill from cache
 ### 1.7 Update Documentation & Completions
 
 **Tasks:**
-- [ ] Update USER_GUIDE.md with new command structure
-- [ ] Update API.md with new exports
-- [ ] Update README.md quick start
+- [x] Update USER_GUIDE.md with new command structure
+- [x] Update API.md with new exports
+- [x] Update README.md quick start
 - [x] Rewrite Fish completions for new structure
 - [x] Add deprecation warnings for old commands
-- [ ] Create migration guide for existing users
+- [x] Create migration guide for existing users
 
 ---
 
