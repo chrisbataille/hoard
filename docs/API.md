@@ -417,7 +417,7 @@ use hoards::{
 
     // AI commands
     cmd_ai_config_set, cmd_ai_config_show, cmd_ai_config_test,
-    cmd_ai_enrich,
+    cmd_ai_enrich, cmd_ai_extract,
 
     // GitHub commands (advanced)
     cmd_gh_fetch, cmd_gh_backfill,

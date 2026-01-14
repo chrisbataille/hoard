@@ -404,6 +404,34 @@ hoards ai enrich --all
 hoards ai enrich --dry-run
 ```
 
+### Extract from GitHub
+
+Extract tool information directly from a GitHub repository's README:
+
+```bash
+# Extract from a single repository
+hoards ai extract https://github.com/BurntSushi/ripgrep
+
+# Extract from multiple repositories (batch mode)
+hoards ai extract url1 url2 url3
+
+# Rate limit API calls (milliseconds between requests)
+hoards ai extract url1 url2 --delay 2000
+
+# Skip confirmation prompt
+hoards ai extract url --yes
+
+# Preview without adding to database
+hoards ai extract url --dry-run
+```
+
+Supported URL formats:
+- `https://github.com/owner/repo`
+- `git@github.com:owner/repo.git`
+- `owner/repo` (shorthand)
+
+Results are cached per repository version to avoid repeat API calls.
+
 ---
 
 ## Config Management
