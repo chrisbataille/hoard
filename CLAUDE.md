@@ -21,6 +21,16 @@ cargo install --path .
 2. Run `cargo clippy` - 0 warnings
 3. Update Fish completions if CLI changed: `shell/fish/completions/hoard.fish`
 
+### Git Workflow
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for branching strategy and commit conventions.
+
+**Quick reference:**
+- `main` = stable releases (tagged)
+- `develop` = integration branch
+- `feature/*`, `fix/*` = branch from `develop`
+- `hotfix/*` = branch from `main` for emergencies
+- Use `/git` skill for guided workflow
+
 ### Code Style
 - **DRY**: Extract common logic into reusable functions
 - **TDD**: Write tests first for new features
