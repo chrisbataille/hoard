@@ -18,7 +18,7 @@ Transform hoard from a CLI tool tracker into the **AI-powered developer tool man
 | Phase | Focus | Duration | Status |
 |-------|-------|----------|--------|
 | 1 | CLI Simplification | 2-3 weeks | ✅ Complete |
-| 2 | AI Enhancements | 2-3 weeks | 🔄 In Progress (2.1 done) |
+| 2 | AI Enhancements | 2-3 weeks | 🔄 In Progress (2.1, 2.2 done) |
 | 3 | TUI MVP | 4-6 weeks | 🔲 Not Started |
 | 4 | TUI Polish | 2-3 weeks | 🔲 Not Started |
 
@@ -323,12 +323,12 @@ hoard ai suggest-bundles
 5. Create bundle and/or install tools
 
 **Tasks:**
-- [ ] Create bundle suggestion prompt template
-- [ ] Gather context (installed tools, usage, categories)
-- [ ] Implement AI suggestion call
-- [ ] Parse bundle suggestions
-- [ ] Implement interactive selection UI
-- [ ] Connect to bundle create/install commands
+- [x] Create bundle suggestion prompt template
+- [x] Gather context (installed tools, usage, categories)
+- [x] Implement AI suggestion call
+- [x] Parse bundle suggestions
+- [x] Implement interactive selection UI
+- [x] Connect to bundle create/install commands
 
 ---
 

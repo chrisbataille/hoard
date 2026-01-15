@@ -170,6 +170,10 @@ hoards ai enrich --all              # Both operations
 hoards ai extract <github-url>      # Extract tool info from README
 hoards ai extract url1 url2 url3    # Batch mode
 hoards ai extract url --yes         # Skip confirmation
+
+# Smart Bundle Suggestions
+hoards ai suggest-bundle            # AI suggests bundles based on usage
+hoards ai suggest-bundle --count 3  # Suggest 3 bundles
 ```
 
 ### Config Management

@@ -32,16 +32,28 @@ Tools needing descriptions:
 {{TOOLS}}
 "#;
 
-const DEFAULT_SUGGEST_BUNDLE_PROMPT: &str = r#"Analyze these CLI tools and suggest {{COUNT}} logical bundles (groups of related tools that work well together).
-Consider tools that: share workflows, complement each other, or are commonly used together.
+const DEFAULT_SUGGEST_BUNDLE_PROMPT: &str = r#"Analyze this user's CLI tools and suggest {{COUNT}} logical bundles based on their ACTUAL USAGE PATTERNS.
 
-IMPORTANT: Do NOT suggest tools that are already in existing bundles (listed below).
+Guidelines:
+1. PRIORITIZE tools the user actually uses (higher usage count = more important)
+2. Group tools that share workflows or complement each other
+3. Each bundle should tell a story (e.g., "Modern Unix", "Git Power Tools", "Rust Development")
+4. Include 3-6 tools per bundle for practical utility
+5. Focus on installed tools with usage > 0 when possible
+
+IMPORTANT: Do NOT suggest tools that are already in existing bundles:
 {{EXISTING_BUNDLES}}
 
-Only respond with a JSON array of objects with "name", "description", and "tools" fields.
-Example: [{"name": "rust-dev", "description": "Rust development essentials", "tools": ["cargo-watch", "cargo-edit", "cargo-outdated"]}]
+Respond ONLY with a JSON array. Each object must have:
+- "name": short bundle name (kebab-case, e.g., "modern-unix")
+- "description": one-line description explaining the theme
+- "tools": array of tool names from the list below
+- "reasoning": brief explanation of why these tools belong together
 
-Available tools (not yet bundled):
+Example:
+[{"name": "modern-unix", "description": "Modern replacements for traditional Unix tools", "tools": ["ripgrep", "fd", "eza", "bat"], "reasoning": "User heavily uses ripgrep (847x) and fd (423x), suggesting preference for modern alternatives"}]
+
+Available tools with usage data (format: name [category] (usage count): description):
 {{TOOLS}}
 "#;
 
@@ -221,28 +233,42 @@ pub struct BundleSuggestion {
     pub name: String,
     pub description: String,
     pub tools: Vec<String>,
+    pub reasoning: Option<String>,
 }
 
-/// Generate a prompt for bundle suggestions
-pub fn suggest_bundle_prompt(tools: &[Tool], existing_bundles: &[Bundle], count: usize) -> String {
+/// Generate a prompt for bundle suggestions with usage data
+pub fn suggest_bundle_prompt(
+    tools: &[Tool],
+    existing_bundles: &[Bundle],
+    usage_data: &std::collections::HashMap<String, i64>,
+    count: usize,
+) -> String {
     // Collect all tools that are already in bundles
     let bundled_tools: std::collections::HashSet<&str> = existing_bundles
         .iter()
         .flat_map(|b| b.tools.iter().map(|s| s.as_str()))
         .collect();
 
-    // Filter out already-bundled tools
-    let unbundled_tools: Vec<&Tool> = tools
+    // Filter out already-bundled tools and sort by usage
+    let mut unbundled_tools: Vec<&Tool> = tools
         .iter()
         .filter(|t| !bundled_tools.contains(t.name.as_str()))
         .collect();
+
+    // Sort by usage count (most used first)
+    unbundled_tools.sort_by(|a, b| {
+        let usage_a = usage_data.get(&a.name).unwrap_or(&0);
+        let usage_b = usage_data.get(&b.name).unwrap_or(&0);
+        usage_b.cmp(usage_a)
+    });
 
     let tool_list: Vec<String> = unbundled_tools
         .iter()
         .map(|t| {
             let cat = t.category.as_deref().unwrap_or("uncategorized");
             let desc = t.description.as_deref().unwrap_or("");
-            format!("- {} [{}]: {}", t.name, cat, desc)
+            let usage = usage_data.get(&t.name).unwrap_or(&0);
+            format!("- {} [{}] ({}x): {}", t.name, cat, usage, desc)
         })
         .collect();
 
@@ -273,6 +299,7 @@ pub fn parse_bundle_response(response: &str) -> Result<Vec<BundleSuggestion>> {
         name: String,
         description: String,
         tools: Vec<String>,
+        reasoning: Option<String>,
     }
 
     let raw: Vec<RawSuggestion> =
@@ -284,6 +311,7 @@ pub fn parse_bundle_response(response: &str) -> Result<Vec<BundleSuggestion>> {
             name: r.name,
             description: r.description,
             tools: r.tools,
+            reasoning: r.reasoning,
         })
         .collect())
 }
