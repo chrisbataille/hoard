@@ -4,6 +4,7 @@
 
 pub mod ai;
 pub mod bundle;
+pub mod completions;
 pub mod config;
 pub mod github;
 pub mod install;
@@ -42,3 +43,5 @@ pub use config::{
     cmd_config_edit, cmd_config_link, cmd_config_list, cmd_config_show, cmd_config_status,
     cmd_config_sync, cmd_config_unlink,
 };
+
+pub use completions::{cmd_completions_install, cmd_completions_status, cmd_completions_uninstall};

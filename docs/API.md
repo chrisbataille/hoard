@@ -416,6 +416,9 @@ use hoards::{
     cmd_usage_log, cmd_usage_init, cmd_usage_config, cmd_usage_reset,
     ensure_usage_configured,
 
+    // Completions commands
+    cmd_completions_install, cmd_completions_status, cmd_completions_uninstall,
+
     // Tool management
     cmd_add, cmd_show, cmd_remove,
     cmd_install, cmd_uninstall, cmd_upgrade,

@@ -118,6 +118,17 @@ hoards usage tool <name>            # Usage for specific tool
 hoards usage reset                  # Reset all counters
 ```
 
+### Shell Completions
+
+```bash
+hoards completions status           # Show completion status for all shells
+hoards completions install          # Install for detected shells
+hoards completions install fish     # Install for specific shell
+hoards completions uninstall        # Remove all completions
+```
+
+*Supported shells: Fish, Bash, Zsh. Completions are auto-installed during `hoards init`.*
+
 ### Tool Management
 
 | Command | Description |
