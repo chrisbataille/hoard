@@ -1149,15 +1149,6 @@ pub fn cmd_ai_discover(
         println!();
     }
 
-    // In dry-run mode, just show the recommendations without prompting
-    if dry_run {
-        println!(
-            "{} Dry run mode - skipping interactive installation",
-            ">".dimmed()
-        );
-        return Ok(());
-    }
-
     // Filter to tools that can be installed
     let installable: Vec<&ToolRecommendation> =
         discovery.tools.iter().filter(|t| !t.installed).collect();
@@ -1166,6 +1157,35 @@ pub fn cmd_ai_discover(
         println!(
             "{} All recommended tools are already installed!",
             "+".green()
+        );
+        return Ok(());
+    }
+
+    // In dry-run mode, show what could be installed but don't prompt
+    if dry_run {
+        println!("{}", "Available for installation:".bold());
+        for (i, tool) in installable.iter().enumerate() {
+            let stars = tool
+                .stars
+                .map(|s| format!(" ({}★)", format_stars(s)))
+                .unwrap_or_default();
+            println!(
+                "  {}. {} - {}{}",
+                i + 1,
+                tool.name.cyan(),
+                tool.description,
+                stars
+            );
+            if let Some(ref github) = tool.github {
+                println!("      GitHub: https://github.com/{}", github);
+            }
+            println!("      Install: {}", tool.install_cmd.dimmed());
+        }
+        println!();
+        println!(
+            "{} Run without {} to install interactively",
+            ">".cyan(),
+            "--dry-run".yellow()
         );
         return Ok(());
     }
@@ -1196,40 +1216,171 @@ pub fn cmd_ai_discover(
         println!();
         for idx in indices {
             let tool = installable[idx];
-            println!(
-                "{} Installing {} via {}...",
-                ">".cyan(),
-                tool.name.bold(),
-                tool.source
-            );
+            install_discovered_tool(db, tool)?;
+        }
+    }
 
-            // Execute install command
-            let status = std::process::Command::new("sh")
-                .arg("-c")
-                .arg(&tool.install_cmd)
-                .status();
+    Ok(())
+}
 
-            match status {
-                Ok(s) if s.success() => {
-                    println!("{} Installed {}", "+".green(), tool.name);
+/// Install a tool discovered via AI, using proper extraction when possible
+fn install_discovered_tool(db: &Database, tool: &crate::ai::ToolRecommendation) -> Result<()> {
+    use crate::ai::{
+        ExtractedTool, extract_prompt, fetch_readme, fetch_repo_version, invoke_ai,
+        parse_extract_response, parse_github_url,
+    };
+    use crate::commands::install::get_safe_install_command;
+    use crate::db::CachedExtraction;
+    use crate::models::{InstallSource, Tool};
 
-                    // Add to database if not already there
-                    if db.get_tool_by_name(&tool.name)?.is_none() {
-                        let new_tool = crate::models::Tool::new(&tool.name)
-                            .with_description(&tool.description)
-                            .with_source(crate::models::InstallSource::from(tool.source.as_str()))
-                            .installed();
-                        db.insert_tool(&new_tool)?;
+    println!("{} Installing {}...", ">".cyan(), tool.name.bold());
+
+    // If tool has a GitHub URL, try to extract proper info first
+    let extracted = if let Some(ref github) = tool.github {
+        let github_url = format!("https://github.com/{}", github);
+        match parse_github_url(&github_url) {
+            Ok((owner, repo)) => {
+                // Check cache first
+                let version = fetch_repo_version(&owner, &repo).unwrap_or_default();
+
+                if let Ok(Some(cached)) = db.get_cached_extraction(&owner, &repo, &version) {
+                    println!("  {} Using cached extraction", "+".green());
+                    Some(ExtractedTool {
+                        name: cached.name,
+                        binary: cached.binary,
+                        source: cached.source,
+                        install_command: cached.install_command,
+                        description: cached.description,
+                        category: cached.category,
+                    })
+                } else {
+                    // Try to extract from README
+                    println!("  {} Extracting info from GitHub...", ">".dimmed());
+                    match fetch_readme(&owner, &repo) {
+                        Ok(readme) => {
+                            let prompt = extract_prompt(&readme);
+                            match invoke_ai(&prompt).and_then(|r| parse_extract_response(&r)) {
+                                Ok(ext) => {
+                                    // Cache it
+                                    let cached = CachedExtraction {
+                                        repo_owner: owner.clone(),
+                                        repo_name: repo.clone(),
+                                        version: version.clone(),
+                                        name: ext.name.clone(),
+                                        binary: ext.binary.clone(),
+                                        source: ext.source.clone(),
+                                        install_command: ext.install_command.clone(),
+                                        description: ext.description.clone(),
+                                        category: ext.category.clone(),
+                                        extracted_at: chrono::Utc::now().to_rfc3339(),
+                                    };
+                                    let _ = db.cache_extraction(&cached);
+                                    println!("  {} Extracted successfully", "+".green());
+                                    Some(ext)
+                                }
+                                Err(e) => {
+                                    println!("  {} Extraction failed: {}", "!".yellow(), e);
+                                    None
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            println!("  {} Could not fetch README: {}", "!".yellow(), e);
+                            None
+                        }
                     }
                 }
-                Ok(_) => {
-                    println!("{} Failed to install {}", "!".red(), tool.name);
-                }
-                Err(e) => {
-                    println!("{} Error installing {}: {}", "!".red(), tool.name, e);
-                }
+            }
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
+
+    // Determine install details
+    let (name, source, install_cmd, description, category, binary) =
+        if let Some(ref ext) = extracted {
+            (
+                ext.name.clone(),
+                ext.source.clone(),
+                ext.install_command.clone(),
+                ext.description.clone(),
+                ext.category.clone(),
+                ext.binary.clone(),
+            )
+        } else {
+            (
+                tool.name.clone(),
+                tool.source.clone(),
+                Some(tool.install_cmd.clone()),
+                tool.description.clone(),
+                tool.category.clone(),
+                tool.binary.clone(),
+            )
+        };
+
+    // Try to use safe install command if we have a known source
+    let final_cmd = if let Some(safe_cmd) = get_safe_install_command(&name, &source, None)? {
+        println!("  {} Using safe install: {}", ">".dimmed(), safe_cmd);
+        Some(safe_cmd)
+    } else if let Some(ref cmd) = install_cmd {
+        println!("  {} Using suggested command: {}", ">".dimmed(), cmd);
+        None // Will use shell command
+    } else {
+        println!("  {} No install command available", "!".red());
+        return Ok(());
+    };
+
+    // Execute installation
+    let success = if let Some(safe_cmd) = final_cmd {
+        match safe_cmd.execute() {
+            Ok(status) => status.success(),
+            Err(e) => {
+                println!("  {} Install error: {}", "!".red(), e);
+                false
             }
         }
+    } else if let Some(ref cmd) = install_cmd {
+        // Fallback to shell command (less safe but works for more sources)
+        match std::process::Command::new("sh").arg("-c").arg(cmd).status() {
+            Ok(status) => status.success(),
+            Err(e) => {
+                println!("  {} Install error: {}", "!".red(), e);
+                false
+            }
+        }
+    } else {
+        false
+    };
+
+    if success {
+        println!("{} Installed {}", "+".green(), name);
+
+        // Add to database with full metadata
+        if db.get_tool_by_name(&name)?.is_none() {
+            let mut new_tool = Tool::new(&name)
+                .with_description(&description)
+                .with_source(InstallSource::from(source.as_str()))
+                .with_category(&category)
+                .installed();
+
+            if let Some(ref bin) = binary {
+                new_tool = new_tool.with_binary(bin);
+            }
+            if let Some(ref cmd) = install_cmd {
+                new_tool = new_tool.with_install_command(cmd);
+            }
+
+            db.insert_tool(&new_tool)?;
+            println!("  {} Added to database with full metadata", "+".green());
+        } else {
+            db.set_tool_installed(&name, true)?;
+        }
+
+        // Invalidate any cached cheatsheet
+        let _ = invalidate_cheatsheet_cache(db, &name);
+    } else {
+        println!("{} Failed to install {}", "!".red(), name);
     }
 
     Ok(())
