@@ -13,9 +13,9 @@ pub mod usage;
 
 // Re-export commonly used items
 pub use install::{
-    SafeCommand, cmd_install, cmd_uninstall, cmd_upgrade, get_install_command,
+    ProcessAction, SafeCommand, cmd_install, cmd_uninstall, cmd_upgrade, get_install_command,
     get_install_command_versioned, get_safe_install_command, get_safe_uninstall_command,
-    validate_package_name, validate_version,
+    handle_running_process, validate_package_name, validate_version,
 };
 
 pub use bundle::{

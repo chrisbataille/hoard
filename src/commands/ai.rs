@@ -2116,6 +2116,7 @@ fn print_migration_commands(result: &crate::ai::MigrationResult) {
 
 /// Execute migration for selected candidates
 fn execute_migration(db: &Database, candidates: &[crate::ai::MigrationCandidate]) -> Result<()> {
+    use crate::commands::install::handle_running_process;
     use indicatif::{ProgressBar, ProgressStyle};
     use std::time::Duration;
 
@@ -2128,6 +2129,23 @@ fn execute_migration(db: &Database, candidates: &[crate::ai::MigrationCandidate]
             candidate.from_source,
             candidate.to_source
         );
+
+        // Check if process is running (get binary name from DB if available)
+        let binary_name = db
+            .get_tool_by_name(&candidate.name)
+            .ok()
+            .flatten()
+            .and_then(|t| t.binary_name)
+            .unwrap_or_else(|| candidate.name.clone());
+
+        if !handle_running_process(&binary_name)? {
+            println!(
+                "  {} Migration cancelled for {}",
+                "!".yellow(),
+                candidate.name
+            );
+            continue;
+        }
 
         // 1. Install from new source
         let install_cmd = match candidate.to_source.as_str() {
