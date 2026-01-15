@@ -2,7 +2,7 @@
 //!
 //! Commands for AI-assisted tool management using various AI providers.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use colored::Colorize;
 use std::process::Command;
 
@@ -1059,4 +1059,228 @@ fn cache_bundle_cheatsheet(
 struct CachedBundleCheatsheet {
     versions: std::collections::HashMap<String, String>,
     cheatsheet: crate::ai::Cheatsheet,
+}
+
+// ==================== AI Discovery ====================
+
+/// Discover tools based on natural language query
+pub fn cmd_ai_discover(
+    db: &Database,
+    query: &str,
+    limit: usize,
+    no_stars: bool,
+    dry_run: bool,
+) -> Result<()> {
+    use crate::ai::{ToolRecommendation, discovery_prompt, invoke_ai, parse_discovery_response};
+    use crate::scanner::is_installed;
+    use dialoguer::{MultiSelect, theme::ColorfulTheme};
+
+    println!("{} Discovering tools for: {}", ">".cyan(), query.bold());
+
+    // Gather installed tools for context
+    let installed_tools: Vec<String> = db
+        .get_all_tools()?
+        .iter()
+        .filter(|t| t.is_installed)
+        .map(|t| t.name.clone())
+        .collect();
+
+    println!(
+        "{} Context: {} installed tools",
+        ">".dimmed(),
+        installed_tools.len()
+    );
+
+    // Generate prompt and call AI
+    let prompt = discovery_prompt(query, &installed_tools);
+    let response = invoke_ai(&prompt)?;
+
+    // Parse response
+    let mut discovery = parse_discovery_response(&response)?;
+
+    // Limit results
+    if discovery.tools.len() > limit {
+        discovery.tools.truncate(limit);
+    }
+
+    // Check installation status and optionally fetch GitHub stars
+    for tool in &mut discovery.tools {
+        let binary = tool.binary.as_deref().unwrap_or(&tool.name);
+        tool.installed = is_installed(binary);
+
+        if !no_stars
+            && let Some(ref github) = tool.github
+            && let Ok(stars) = fetch_github_stars(github)
+        {
+            tool.stars = Some(stars);
+        }
+    }
+
+    // Display results
+    println!();
+    println!("{}", discovery.summary.bold());
+    println!();
+
+    // Group by category
+    let essential: Vec<_> = discovery
+        .tools
+        .iter()
+        .filter(|t| t.category == "essential")
+        .collect();
+    let recommended: Vec<_> = discovery
+        .tools
+        .iter()
+        .filter(|t| t.category != "essential")
+        .collect();
+
+    if !essential.is_empty() {
+        println!("{}", "Essential:".green().bold());
+        for tool in &essential {
+            print_tool_recommendation(tool);
+        }
+        println!();
+    }
+
+    if !recommended.is_empty() {
+        println!("{}", "Recommended:".blue().bold());
+        for tool in &recommended {
+            print_tool_recommendation(tool);
+        }
+        println!();
+    }
+
+    // In dry-run mode, just show the recommendations without prompting
+    if dry_run {
+        println!(
+            "{} Dry run mode - skipping interactive installation",
+            ">".dimmed()
+        );
+        return Ok(());
+    }
+
+    // Filter to tools that can be installed
+    let installable: Vec<&ToolRecommendation> =
+        discovery.tools.iter().filter(|t| !t.installed).collect();
+
+    if installable.is_empty() {
+        println!(
+            "{} All recommended tools are already installed!",
+            "+".green()
+        );
+        return Ok(());
+    }
+
+    // Interactive selection
+    let options: Vec<String> = installable
+        .iter()
+        .map(|t| {
+            let stars = t
+                .stars
+                .map(|s| format!(" ({}★)", format_stars(s)))
+                .unwrap_or_default();
+            format!("{} - {}{}", t.name, t.description, stars)
+        })
+        .collect();
+
+    println!("{}", "Select tools to install:".bold());
+    let selections = MultiSelect::with_theme(&ColorfulTheme::default())
+        .items(&options)
+        .interact_opt()?;
+
+    if let Some(indices) = selections {
+        if indices.is_empty() {
+            println!("{} No tools selected", ">".dimmed());
+            return Ok(());
+        }
+
+        println!();
+        for idx in indices {
+            let tool = installable[idx];
+            println!(
+                "{} Installing {} via {}...",
+                ">".cyan(),
+                tool.name.bold(),
+                tool.source
+            );
+
+            // Execute install command
+            let status = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(&tool.install_cmd)
+                .status();
+
+            match status {
+                Ok(s) if s.success() => {
+                    println!("{} Installed {}", "+".green(), tool.name);
+
+                    // Add to database if not already there
+                    if db.get_tool_by_name(&tool.name)?.is_none() {
+                        let new_tool = crate::models::Tool::new(&tool.name)
+                            .with_description(&tool.description)
+                            .with_source(crate::models::InstallSource::from(tool.source.as_str()))
+                            .installed();
+                        db.insert_tool(&new_tool)?;
+                    }
+                }
+                Ok(_) => {
+                    println!("{} Failed to install {}", "!".red(), tool.name);
+                }
+                Err(e) => {
+                    println!("{} Error installing {}: {}", "!".red(), tool.name, e);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Print a single tool recommendation
+fn print_tool_recommendation(tool: &crate::ai::ToolRecommendation) {
+    let status = if tool.installed {
+        "✓".green().to_string()
+    } else {
+        " ".to_string()
+    };
+
+    let stars = tool
+        .stars
+        .map(|s| format!(" {}★", format_stars(s)).dimmed().to_string())
+        .unwrap_or_default();
+
+    println!(
+        "  {} {:<15} {}{}",
+        status,
+        tool.name.cyan(),
+        tool.description,
+        stars
+    );
+    println!("      {} {}", "→".dimmed(), tool.reason.dimmed());
+}
+
+/// Format star count (e.g., 12345 -> "12.3K")
+fn format_stars(stars: u64) -> String {
+    if stars >= 1000 {
+        format!("{:.1}K", stars as f64 / 1000.0)
+    } else {
+        stars.to_string()
+    }
+}
+
+/// Fetch GitHub stars for a repo
+fn fetch_github_stars(repo: &str) -> Result<u64> {
+    // Use the GitHub API
+    let url = format!("https://api.github.com/repos/{}", repo);
+
+    let mut response = ureq::get(&url)
+        .header("User-Agent", "hoards-cli")
+        .header("Accept", "application/vnd.github.v3+json")
+        .call()
+        .context("Failed to fetch GitHub info")?;
+
+    let body = response.body_mut().read_to_string()?;
+    let json: serde_json::Value = serde_json::from_str(&body)?;
+    let stars = json["stargazers_count"].as_u64().unwrap_or(0);
+
+    Ok(stars)
 }
