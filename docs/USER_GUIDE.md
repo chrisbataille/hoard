@@ -566,6 +566,50 @@ Supported URL formats:
 
 Results are cached per repository version to avoid repeat API calls.
 
+### Smart Bundle Suggestions
+
+AI analyzes your installed tools and usage patterns to suggest logical bundles:
+
+```bash
+# Get bundle suggestions based on your usage
+hoards ai suggest-bundle
+
+# Suggest a specific number of bundles
+hoards ai suggest-bundle --count 3
+```
+
+**Interactive mode** (when running in a terminal):
+- For each suggested bundle, choose an action:
+  - `[c] Create` - Create the bundle in your database
+  - `[i] Install` - Install missing tools from the suggestion
+  - `[b] Both` - Create bundle and install missing tools
+  - `[s] Skip` - Skip this suggestion
+
+**How it works:**
+1. Analyzes your installed tools and categories
+2. Examines your shell history usage patterns
+3. AI suggests bundles based on:
+   - Tools you frequently use together
+   - Complementary tool categories (e.g., "Modern Unix", "Git Power Tools")
+   - Your actual usage counts (prioritizes tools you use most)
+
+Example output:
+```
+📦 modern-unix - Modern replacements for traditional Unix utilities
+   These tools provide better UX than classic Unix commands
+
+   • bat (234x)
+   • eza (189x)
+   • ripgrep (847x)
+   • fd (423x)
+
+Action
+> [c] Create bundle 'modern-unix'
+  [i] Install missing tools only
+  [b] Both - create bundle and install tools
+  [s] Skip this suggestion
+```
+
 ---
 
 ## Config Management
