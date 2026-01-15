@@ -53,47 +53,40 @@ pub fn cmd_bundle_list(db: &Database) -> Result<()> {
         return Ok(());
     }
 
+    let term_width = terminal_size::terminal_size()
+        .map(|(w, _)| w.0)
+        .unwrap_or(120);
+
     let mut table = Table::new();
     table
         .load_preset(UTF8_FULL)
         .apply_modifier(UTF8_ROUND_CORNERS)
         .set_content_arrangement(ContentArrangement::Dynamic)
+        .set_width(term_width)
         .set_header(vec![
-            Cell::new("Bundle").fg(Color::Cyan),
-            Cell::new("Tools").fg(Color::Cyan),
+            Cell::new("📦 Bundle").fg(Color::Cyan),
+            Cell::new("#").fg(Color::Cyan),
             Cell::new("Description").fg(Color::Cyan),
-            Cell::new("Contents").fg(Color::Cyan),
         ]);
 
-    for bundle in bundles {
+    for bundle in &bundles {
         let desc = bundle.description.as_deref().unwrap_or("-");
-        let tools_preview: String = bundle
-            .tools
-            .iter()
-            .take(5)
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(", ");
-        let tools_str = if bundle.tools.len() > 5 {
-            format!("{}, ...", tools_preview)
-        } else {
-            tools_preview
-        };
 
         table.add_row(vec![
             Cell::new(&bundle.name),
             Cell::new(bundle.tools.len()),
             Cell::new(desc),
-            Cell::new(tools_str),
         ]);
     }
 
     println!("{table}");
+    println!("{} {} bundles", ">".cyan(), bundles.len());
     Ok(())
 }
 
 /// Show details of a specific bundle
 pub fn cmd_bundle_show(db: &Database, name: &str) -> Result<()> {
+    use crate::icons::{source_icon, status_icon};
     use comfy_table::{
         Cell, Color, ContentArrangement, Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL,
     };
@@ -106,46 +99,59 @@ pub fn cmd_bundle_show(db: &Database, name: &str) -> Result<()> {
         }
     };
 
-    println!("{} {}", "Bundle:".bold(), bundle.name.cyan());
+    println!("{} {}", "📦 Bundle:".bold(), bundle.name.cyan());
     if let Some(desc) = &bundle.description {
-        println!("{} {}", "Description:".bold(), desc);
+        println!("{}", desc.dimmed());
     }
     println!();
+
+    let term_width = terminal_size::terminal_size()
+        .map(|(w, _)| w.0)
+        .unwrap_or(120);
 
     let mut table = Table::new();
     table
         .load_preset(UTF8_FULL)
         .apply_modifier(UTF8_ROUND_CORNERS)
         .set_content_arrangement(ContentArrangement::Dynamic)
+        .set_width(term_width)
         .set_header(vec![
             Cell::new("Tool").fg(Color::Cyan),
-            Cell::new("Source").fg(Color::Cyan),
-            Cell::new("Status").fg(Color::Cyan),
+            Cell::new("Src").fg(Color::Cyan),
+            Cell::new("").fg(Color::Cyan),
         ]);
 
+    let mut installed_count = 0;
     for tool_name in &bundle.tools {
-        // Check if tool is in database and get its info
         if let Some(tool) = db.get_tool_by_name(tool_name)? {
-            let status_cell = if tool.is_installed {
-                Cell::new("installed").fg(Color::Green)
+            let src_icon = source_icon(&tool.source.to_string());
+            let (status, color) = if tool.is_installed {
+                installed_count += 1;
+                (status_icon(true), Color::Green)
             } else {
-                Cell::new("missing").fg(Color::Red)
+                (status_icon(false), Color::Red)
             };
             table.add_row(vec![
                 Cell::new(tool_name),
-                Cell::new(tool.source.to_string()),
-                status_cell,
+                Cell::new(src_icon),
+                Cell::new(status).fg(color),
             ]);
         } else {
             table.add_row(vec![
                 Cell::new(tool_name),
-                Cell::new("-"),
-                Cell::new("not in db").fg(Color::Yellow),
+                Cell::new("?"),
+                Cell::new("⚠").fg(Color::Yellow),
             ]);
         }
     }
 
     println!("{table}");
+    println!(
+        "{} {}/{} installed",
+        ">".cyan(),
+        installed_count,
+        bundle.tools.len()
+    );
     Ok(())
 }
 

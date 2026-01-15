@@ -468,6 +468,7 @@ fn cmd_list(
     use comfy_table::{
         Cell, Color, ContentArrangement, Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL,
     };
+    use hoards::icons::{category_icon, print_legend_compact, source_icon, status_icon};
 
     // If filtering by label, use the label-specific query
     let tools = if let Some(lbl) = &label {
@@ -486,44 +487,51 @@ fn cmd_list(
             println!("{}", serde_json::to_string_pretty(&tools)?);
         }
         _ => {
+            let term_width = terminal_size::terminal_size()
+                .map(|(w, _)| w.0)
+                .unwrap_or(120);
+
             let mut table = Table::new();
             table
                 .load_preset(UTF8_FULL)
                 .apply_modifier(UTF8_ROUND_CORNERS)
                 .set_content_arrangement(ContentArrangement::Dynamic)
+                .set_width(term_width)
                 .set_header(vec![
                     Cell::new("Name").fg(Color::Cyan),
-                    Cell::new("Category").fg(Color::Cyan),
-                    Cell::new("Source").fg(Color::Cyan),
-                    Cell::new("Status").fg(Color::Cyan),
+                    Cell::new("Cat").fg(Color::Cyan),
+                    Cell::new("Src").fg(Color::Cyan),
+                    Cell::new("").fg(Color::Cyan), // Status icon
                     Cell::new("Description").fg(Color::Cyan),
                 ]);
 
-            for tool in tools {
+            for tool in &tools {
+                let cat = tool.category.as_deref().unwrap_or("-");
+                let cat_display = format!("{} {}", category_icon(cat), cat);
+
+                let src = tool.source.to_string();
+                let src_display = source_icon(&src).to_string();
+
                 let status_cell = if tool.is_installed {
-                    Cell::new("installed").fg(Color::Green)
+                    Cell::new(status_icon(true)).fg(Color::Green)
                 } else {
-                    Cell::new("missing").fg(Color::Red)
+                    Cell::new(status_icon(false)).fg(Color::Red)
                 };
 
-                let desc = tool
-                    .description
-                    .as_deref()
-                    .unwrap_or("")
-                    .chars()
-                    .take(40)
-                    .collect::<String>();
+                let desc = tool.description.as_deref().unwrap_or("");
 
                 table.add_row(vec![
                     Cell::new(&tool.name),
-                    Cell::new(tool.category.as_deref().unwrap_or("-")),
-                    Cell::new(tool.source.to_string()),
+                    Cell::new(cat_display),
+                    Cell::new(src_display),
                     status_cell,
                     Cell::new(desc),
                 ]);
             }
 
             println!("{table}");
+            print_legend_compact();
+            println!("{} {} tools", ">".cyan(), tools.len());
         }
     }
 

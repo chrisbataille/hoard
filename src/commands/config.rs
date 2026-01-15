@@ -146,6 +146,7 @@ pub fn cmd_config_unlink(
 
 /// List all managed configs
 pub fn cmd_config_list(db: &Database, broken_only: bool, format: &str) -> Result<()> {
+    use crate::icons::config_status_icon;
     use comfy_table::{
         Cell, Color, ContentArrangement, Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL,
     };
@@ -166,18 +167,24 @@ pub fn cmd_config_list(db: &Database, broken_only: bool, format: &str) -> Result
         return Ok(());
     }
 
+    let term_width = terminal_size::terminal_size()
+        .map(|(w, _)| w.0)
+        .unwrap_or(120);
+
     let mut table = Table::new();
     table
         .load_preset(UTF8_FULL)
         .apply_modifier(UTF8_ROUND_CORNERS)
         .set_content_arrangement(ContentArrangement::Dynamic)
+        .set_width(term_width)
         .set_header(vec![
-            Cell::new("Name").fg(Color::Cyan),
+            Cell::new("⚙ Config").fg(Color::Cyan),
             Cell::new("Target").fg(Color::Cyan),
             Cell::new("Source").fg(Color::Cyan),
-            Cell::new("Status").fg(Color::Cyan),
+            Cell::new("").fg(Color::Cyan),
         ]);
 
+    let mut shown = 0;
     for config in configs {
         let target_path = expand_path(&config.target_path);
         let source_path = expand_path(&config.source_path);
@@ -197,34 +204,21 @@ pub fn cmd_config_list(db: &Database, broken_only: bool, format: &str) -> Result
             continue;
         }
 
-        // Truncate paths for display
-        let target_display = if config.target_path.len() > 35 {
-            format!(
-                "...{}",
-                &config.target_path[config.target_path.len() - 32..]
-            )
-        } else {
-            config.target_path.clone()
-        };
-
-        let source_display = if config.source_path.len() > 35 {
-            format!(
-                "...{}",
-                &config.source_path[config.source_path.len() - 32..]
-            )
-        } else {
-            config.source_path.clone()
-        };
-
         table.add_row(vec![
             Cell::new(&config.name),
-            Cell::new(target_display),
-            Cell::new(source_display),
-            Cell::new(status_text).fg(status_color),
+            Cell::new(&config.target_path),
+            Cell::new(&config.source_path),
+            Cell::new(config_status_icon(status_text)).fg(status_color),
         ]);
+        shown += 1;
     }
 
     println!("{table}");
+    println!(
+        "{} 🔗 linked  ❌ missing  ⚠ conflict  ◯ unlinked",
+        "".dimmed()
+    );
+    println!("{} {} configs", ">".cyan(), shown);
     Ok(())
 }
 

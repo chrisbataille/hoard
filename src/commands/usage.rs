@@ -27,7 +27,7 @@ pub fn cmd_labels(db: &Database) -> Result<()> {
         .apply_modifier(UTF8_ROUND_CORNERS)
         .set_content_arrangement(ContentArrangement::Dynamic)
         .set_header(vec![
-            Cell::new("Label").fg(Color::Cyan),
+            Cell::new("🏷 Label").fg(Color::Cyan),
             Cell::new("Tools").fg(Color::Cyan),
         ]);
 
@@ -176,27 +176,32 @@ pub fn cmd_usage_show(db: &Database, limit: usize) -> Result<()> {
 
     let total: i64 = usage.iter().map(|(_, u)| u.use_count).sum();
 
+    let term_width = terminal_size::terminal_size()
+        .map(|(w, _)| w.0)
+        .unwrap_or(120);
+
     let mut table = Table::new();
     table
         .load_preset(UTF8_FULL)
         .apply_modifier(UTF8_ROUND_CORNERS)
         .set_content_arrangement(ContentArrangement::Dynamic)
+        .set_width(term_width)
         .set_header(vec![
-            Cell::new("Tool").fg(Color::Cyan),
+            Cell::new("📊 Tool").fg(Color::Cyan),
             Cell::new("Uses").fg(Color::Cyan),
-            Cell::new("Percent").fg(Color::Cyan),
-            Cell::new("Bar").fg(Color::Cyan),
+            Cell::new("%").fg(Color::Cyan),
+            Cell::new("Usage").fg(Color::Cyan),
         ]);
 
     for (name, stats) in usage.iter().take(limit) {
         let percent = (stats.use_count as f64 / total as f64) * 100.0;
-        let bar_len = (percent / 5.0).round() as usize; // Max 20 chars for 100%
+        let bar_len = (percent / 5.0).round() as usize;
         let bar = "█".repeat(bar_len);
 
         table.add_row(vec![
             Cell::new(name),
             Cell::new(stats.use_count),
-            Cell::new(format!("{:.1}%", percent)),
+            Cell::new(format!("{:.1}", percent)),
             Cell::new(bar).fg(Color::Green),
         ]);
     }
@@ -213,7 +218,7 @@ pub fn cmd_usage_show(db: &Database, limit: usize) -> Result<()> {
         );
     }
 
-    println!("{} Total tracked uses: {}", ">".cyan(), total);
+    println!("📈 Total: {} uses across {} tools", total, usage.len());
 
     Ok(())
 }
@@ -242,6 +247,7 @@ pub fn cmd_usage_tool(db: &Database, name: &str) -> Result<()> {
 
 /// Show unused tools
 pub fn cmd_unused(db: &Database) -> Result<()> {
+    use crate::icons::source_icon;
     use comfy_table::{
         Cell, Color, ContentArrangement, Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL,
     };
@@ -249,7 +255,7 @@ pub fn cmd_unused(db: &Database) -> Result<()> {
     let unused = db.get_unused_tools()?;
 
     if unused.is_empty() {
-        println!("{} All installed tools have been used!", "+".green());
+        println!("{} All installed tools have been used!", "✓".green());
         println!(
             "  Run {} first if you haven't already",
             "hoards usage scan".cyan()
@@ -257,28 +263,33 @@ pub fn cmd_unused(db: &Database) -> Result<()> {
         return Ok(());
     }
 
-    println!("{}", "Installed tools with no recorded usage:".bold());
+    println!("{}", "🗑 Installed tools with no recorded usage:".bold());
     println!();
+
+    let term_width = terminal_size::terminal_size()
+        .map(|(w, _)| w.0)
+        .unwrap_or(120);
 
     let mut table = Table::new();
     table
         .load_preset(UTF8_FULL)
         .apply_modifier(UTF8_ROUND_CORNERS)
         .set_content_arrangement(ContentArrangement::Dynamic)
+        .set_width(term_width)
         .set_header(vec![
             Cell::new("Tool").fg(Color::Cyan),
-            Cell::new("Source").fg(Color::Cyan),
+            Cell::new("Src").fg(Color::Cyan),
             Cell::new("Description").fg(Color::Cyan),
         ]);
 
     for tool in &unused {
         let desc = tool.description.as_deref().unwrap_or("-");
-        let desc_short: String = desc.chars().take(50).collect();
+        let src_icon = source_icon(&tool.source.to_string());
 
         table.add_row(vec![
             Cell::new(&tool.name),
-            Cell::new(tool.source.to_string()),
-            Cell::new(desc_short),
+            Cell::new(src_icon),
+            Cell::new(desc),
         ]);
     }
 

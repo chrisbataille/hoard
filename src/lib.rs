@@ -5,6 +5,7 @@ pub mod config;
 pub mod db;
 pub mod github;
 pub mod history;
+pub mod icons;
 pub mod models;
 pub mod scanner;
 pub mod sources;
