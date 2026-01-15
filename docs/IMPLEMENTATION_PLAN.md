@@ -673,6 +673,7 @@ src/tui/
 - [ ] Bundle suggestions rated useful by users
 - [ ] Cheatsheets generated in <2 seconds
 - [x] Real-time usage tracking via shell hooks
+- [x] Auto-install shell completions (Fish, Bash, Zsh) during `hoards init`
 
 ### Phase 3
 - [ ] TUI launches in <100ms

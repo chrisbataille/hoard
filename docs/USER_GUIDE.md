@@ -30,8 +30,41 @@ hoards init
 This will guide you through:
 1. Scanning your system for installed tools
 2. Syncing installation status
-3. Optionally fetching GitHub data
-4. Optionally setting up AI categorization
+3. Fetching descriptions from registries
+4. Installing shell completions for detected shells (Fish, Bash, Zsh)
+5. Optionally fetching GitHub data
+6. Optionally setting up AI categorization
+
+### Shell Completions
+
+Shell completions are automatically installed during `hoards init`. To manage them manually:
+
+```bash
+# Check completion status
+hoards completions status
+
+# Install completions for detected shells
+hoards completions install
+
+# Install for a specific shell
+hoards completions install fish
+hoards completions install bash
+hoards completions install zsh
+
+# Force reinstall (overwrite existing)
+hoards completions install --force
+
+# Remove completions
+hoards completions uninstall
+hoards completions uninstall fish  # Remove for specific shell
+```
+
+**Completion file locations:**
+- Fish: `~/.config/fish/completions/hoards.fish`
+- Bash: `~/.local/share/bash-completion/completions/hoards`
+- Zsh: `~/.zfunc/_hoards`
+
+For Zsh, you may need to add `~/.zfunc` to your fpath. The installer will offer to configure this automatically.
 
 ### Manual Setup
 

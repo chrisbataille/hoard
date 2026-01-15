@@ -311,12 +311,9 @@ pub enum Commands {
     // ============================================
     // SHELL COMPLETIONS
     // ============================================
-    /// Generate shell completions
-    Completions {
-        /// Shell to generate completions for
-        #[arg(value_enum)]
-        shell: Shell,
-    },
+    /// Manage shell completions
+    #[command(subcommand)]
+    Completions(CompletionsCommands),
 
     // ============================================
     // ALIASES (hidden, for backward compatibility)
@@ -750,6 +747,37 @@ pub enum UsageCommands {
         /// Skip confirmation prompt
         #[arg(short, long)]
         force: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum CompletionsCommands {
+    /// Generate completions and print to stdout
+    Generate {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: Shell,
+    },
+
+    /// Install completions for detected shells
+    Install {
+        /// Specific shell to install for (auto-detects if omitted)
+        #[arg(value_parser = ["fish", "bash", "zsh"])]
+        shell: Option<String>,
+
+        /// Overwrite existing completions
+        #[arg(short, long)]
+        force: bool,
+    },
+
+    /// Show completion installation status
+    Status,
+
+    /// Remove installed completions
+    Uninstall {
+        /// Specific shell to uninstall for (all detected if omitted)
+        #[arg(value_parser = ["fish", "bash", "zsh"])]
+        shell: Option<String>,
     },
 }
 
