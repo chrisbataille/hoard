@@ -42,6 +42,10 @@ pub fn cmd_bundle_create(
 
 /// List all bundles
 pub fn cmd_bundle_list(db: &Database) -> Result<()> {
+    use comfy_table::{
+        Cell, Color, ContentArrangement, Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL,
+    };
+
     let bundles = db.list_bundles()?;
 
     if bundles.is_empty() {
@@ -49,22 +53,51 @@ pub fn cmd_bundle_list(db: &Database) -> Result<()> {
         return Ok(());
     }
 
-    println!("{}", "Bundles".bold());
-    println!("{}", "=".repeat(40));
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL)
+        .apply_modifier(UTF8_ROUND_CORNERS)
+        .set_content_arrangement(ContentArrangement::Dynamic)
+        .set_header(vec![
+            Cell::new("Bundle").fg(Color::Cyan),
+            Cell::new("Tools").fg(Color::Cyan),
+            Cell::new("Description").fg(Color::Cyan),
+            Cell::new("Contents").fg(Color::Cyan),
+        ]);
 
     for bundle in bundles {
-        println!("\n{} ({} tools)", bundle.name.bold(), bundle.tools.len());
-        if let Some(desc) = &bundle.description {
-            println!("  {}", desc.dimmed());
-        }
-        println!("  {}", bundle.tools.join(", ").cyan());
+        let desc = bundle.description.as_deref().unwrap_or("-");
+        let tools_preview: String = bundle
+            .tools
+            .iter()
+            .take(5)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        let tools_str = if bundle.tools.len() > 5 {
+            format!("{}, ...", tools_preview)
+        } else {
+            tools_preview
+        };
+
+        table.add_row(vec![
+            Cell::new(&bundle.name),
+            Cell::new(bundle.tools.len()),
+            Cell::new(desc),
+            Cell::new(tools_str),
+        ]);
     }
 
+    println!("{table}");
     Ok(())
 }
 
 /// Show details of a specific bundle
 pub fn cmd_bundle_show(db: &Database, name: &str) -> Result<()> {
+    use comfy_table::{
+        Cell, Color, ContentArrangement, Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL,
+    };
+
     let bundle = match db.get_bundle(name)? {
         Some(b) => b,
         None => {
@@ -73,34 +106,46 @@ pub fn cmd_bundle_show(db: &Database, name: &str) -> Result<()> {
         }
     };
 
-    println!("{}", bundle.name.bold());
-    println!("{}", "=".repeat(bundle.name.len()));
-
+    println!("{} {}", "Bundle:".bold(), bundle.name.cyan());
     if let Some(desc) = &bundle.description {
-        println!("\n{}", desc);
+        println!("{} {}", "Description:".bold(), desc);
     }
+    println!();
 
-    println!("\n{} ({}):", "Tools".bold(), bundle.tools.len());
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL)
+        .apply_modifier(UTF8_ROUND_CORNERS)
+        .set_content_arrangement(ContentArrangement::Dynamic)
+        .set_header(vec![
+            Cell::new("Tool").fg(Color::Cyan),
+            Cell::new("Source").fg(Color::Cyan),
+            Cell::new("Status").fg(Color::Cyan),
+        ]);
 
     for tool_name in &bundle.tools {
         // Check if tool is in database and get its info
         if let Some(tool) = db.get_tool_by_name(tool_name)? {
-            let status = if tool.is_installed {
-                "installed".green()
+            let status_cell = if tool.is_installed {
+                Cell::new("installed").fg(Color::Green)
             } else {
-                "missing".red()
+                Cell::new("missing").fg(Color::Red)
             };
-            println!(
-                "  {} ({}) [{}]",
-                tool_name,
-                tool.source.to_string().cyan(),
-                status
-            );
+            table.add_row(vec![
+                Cell::new(tool_name),
+                Cell::new(tool.source.to_string()),
+                status_cell,
+            ]);
         } else {
-            println!("  {} ({})", tool_name, "not in db".dimmed());
+            table.add_row(vec![
+                Cell::new(tool_name),
+                Cell::new("-"),
+                Cell::new("not in db").fg(Color::Yellow),
+            ]);
         }
     }
 
+    println!("{table}");
     Ok(())
 }
 

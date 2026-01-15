@@ -465,6 +465,10 @@ fn cmd_list(
     label: Option<String>,
     format: &str,
 ) -> Result<()> {
+    use comfy_table::{
+        Cell, Color, ContentArrangement, Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL,
+    };
+
     // If filtering by label, use the label-specific query
     let tools = if let Some(lbl) = &label {
         db.list_tools_by_label(lbl)?
@@ -482,38 +486,44 @@ fn cmd_list(
             println!("{}", serde_json::to_string_pretty(&tools)?);
         }
         _ => {
-            // Table format
-            println!(
-                "{:20} {:12} {:10} {:8} {}",
-                "NAME".bold(),
-                "CATEGORY".bold(),
-                "SOURCE".bold(),
-                "STATUS".bold(),
-                "DESCRIPTION".bold()
-            );
-            println!("{}", "-".repeat(80));
+            let mut table = Table::new();
+            table
+                .load_preset(UTF8_FULL)
+                .apply_modifier(UTF8_ROUND_CORNERS)
+                .set_content_arrangement(ContentArrangement::Dynamic)
+                .set_header(vec![
+                    Cell::new("Name").fg(Color::Cyan),
+                    Cell::new("Category").fg(Color::Cyan),
+                    Cell::new("Source").fg(Color::Cyan),
+                    Cell::new("Status").fg(Color::Cyan),
+                    Cell::new("Description").fg(Color::Cyan),
+                ]);
 
             for tool in tools {
-                let status = if tool.is_installed {
-                    "installed".green()
+                let status_cell = if tool.is_installed {
+                    Cell::new("installed").fg(Color::Green)
                 } else {
-                    "missing".red()
+                    Cell::new("missing").fg(Color::Red)
                 };
 
-                println!(
-                    "{:20} {:12} {:10} {:8} {}",
-                    tool.name,
-                    tool.category.as_deref().unwrap_or("-"),
-                    tool.source.to_string(),
-                    status,
-                    tool.description
-                        .as_deref()
-                        .unwrap_or("")
-                        .chars()
-                        .take(30)
-                        .collect::<String>()
-                );
+                let desc = tool
+                    .description
+                    .as_deref()
+                    .unwrap_or("")
+                    .chars()
+                    .take(40)
+                    .collect::<String>();
+
+                table.add_row(vec![
+                    Cell::new(&tool.name),
+                    Cell::new(tool.category.as_deref().unwrap_or("-")),
+                    Cell::new(tool.source.to_string()),
+                    status_cell,
+                    Cell::new(desc),
+                ]);
             }
+
+            println!("{table}");
         }
     }
 
