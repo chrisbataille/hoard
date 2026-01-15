@@ -724,6 +724,33 @@ pub enum UsageCommands {
         /// Tool name
         name: String,
     },
+
+    /// Log a single command usage (for shell hooks)
+    Log {
+        /// Command that was executed
+        command: String,
+    },
+
+    /// Show shell hook setup instructions
+    Init {
+        /// Shell type (auto-detected if omitted)
+        #[arg(value_parser = ["fish", "bash", "zsh"])]
+        shell: Option<String>,
+    },
+
+    /// View or change usage tracking configuration
+    Config {
+        /// Set tracking mode
+        #[arg(long, value_parser = ["scan", "hook"])]
+        mode: Option<String>,
+    },
+
+    /// Reset all usage counters to zero
+    Reset {
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        force: bool,
+    },
 }
 
 // ============================================

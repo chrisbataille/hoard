@@ -461,6 +461,57 @@ hoard ai migrate --from apt --to cargo
 
 ---
 
+### 2.7 Real-time Usage Tracking ✅
+
+**Status:** COMPLETED
+
+Shell hooks for real-time command tracking, eliminating the need for periodic history scans.
+
+```bash
+# Configure tracking mode
+hoards usage config --mode hook
+
+# Output:
+# > Switching to hook mode...
+# > Detected shell: zsh
+#
+# ? Add hook to ~/.zshrc automatically? [Y/n] y
+#
+# > Adding hook to ~/.zshrc...
+# + Hook added successfully!
+# + Configuration saved.
+```
+
+**Commands:**
+```bash
+hoards usage config              # View/change tracking mode
+hoards usage config --mode scan  # Use history scanning
+hoards usage config --mode hook  # Use shell hooks
+hoards usage init [shell]        # Show/setup hook instructions
+hoards usage log <cmd>           # Log a command (called by hook)
+hoards usage reset [-f]          # Reset all counters
+```
+
+**Implementation:**
+- [x] Add `UsageConfig` and `UsageMode` to config
+- [x] Add `usage log` command for shell hooks
+- [x] Add `usage init` command for setup instructions
+- [x] Add `usage config` command for mode management
+- [x] Add `usage reset` command for counter reset
+- [x] Automatic shell hook setup for Fish, Zsh, Bash
+- [x] Automatic bash-preexec download and installation
+- [x] Idempotent setup (detects existing hooks)
+- [x] Add `match_command_to_tool()` DB method for fast lookup
+
+**Shell Support:**
+| Shell | Config File | Hook Setup |
+|-------|-------------|------------|
+| Fish | `~/.config/fish/config.fish` | Automatic |
+| Zsh | `~/.zshrc` | Automatic |
+| Bash | `~/.bashrc` + `~/.bash-preexec.sh` | Automatic (downloads bash-preexec) |
+
+---
+
 ## Phase 3: TUI MVP
 
 **Goal:** Build a functional terminal UI using Ratatui.
@@ -618,9 +669,10 @@ src/tui/
 - [x] No breaking changes (aliases work)
 
 ### Phase 2
-- [ ] AI extraction works for 90%+ of GitHub repos
+- [x] AI extraction works for 90%+ of GitHub repos
 - [ ] Bundle suggestions rated useful by users
 - [ ] Cheatsheets generated in <2 seconds
+- [x] Real-time usage tracking via shell hooks
 
 ### Phase 3
 - [ ] TUI launches in <100ms

@@ -59,11 +59,41 @@ impl AiProvider {
     }
 }
 
+/// Usage tracking mode
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum UsageMode {
+    /// Manual history scanning with `usage scan`
+    Scan,
+    /// Real-time tracking via shell hooks
+    Hook,
+}
+
+impl std::fmt::Display for UsageMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Scan => write!(f, "scan"),
+            Self::Hook => write!(f, "hook"),
+        }
+    }
+}
+
+/// Usage tracking configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UsageConfig {
+    /// Tracking mode: scan (manual) or hook (automatic)
+    pub mode: Option<UsageMode>,
+    /// Shell for hook mode (fish, bash, zsh)
+    pub shell: Option<String>,
+}
+
 /// Hoard configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HoardConfig {
     #[serde(default)]
     pub ai: AiConfig,
+    #[serde(default)]
+    pub usage: UsageConfig,
 }
 
 /// AI-specific configuration

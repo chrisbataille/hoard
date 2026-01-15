@@ -32,7 +32,8 @@ pub use github::{
 };
 
 pub use usage::{
-    cmd_labels, cmd_recommend, cmd_unused, cmd_usage_scan, cmd_usage_show, cmd_usage_tool,
+    cmd_labels, cmd_recommend, cmd_unused, cmd_usage_config, cmd_usage_init, cmd_usage_log,
+    cmd_usage_reset, cmd_usage_scan, cmd_usage_show, cmd_usage_tool, ensure_usage_configured,
 };
 
 pub use misc::{cmd_doctor, cmd_edit, cmd_export, cmd_import};

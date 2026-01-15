@@ -214,6 +214,11 @@ fn usage_operations(db: &Database) -> Result<()> {
     // Get unused tools
     let unused = db.get_unused_tools()?;
 
+    // Match a command to a tracked tool (for shell hooks)
+    if let Some(tool_name) = db.match_command_to_tool("rg")? {
+        println!("Command 'rg' maps to tool: {}", tool_name);
+    }
+
     // Clear usage data
     db.clear_usage()?;
 
@@ -406,6 +411,11 @@ use hoards::{
     cmd_insights_overview, cmd_insights_usage, cmd_insights_unused,
     cmd_insights_health, cmd_insights_stats,
 
+    // Usage tracking commands
+    cmd_usage_scan, cmd_usage_show, cmd_usage_tool,
+    cmd_usage_log, cmd_usage_init, cmd_usage_config, cmd_usage_reset,
+    ensure_usage_configured,
+
     // Tool management
     cmd_add, cmd_show, cmd_remove,
     cmd_install, cmd_uninstall, cmd_upgrade,
@@ -425,6 +435,9 @@ use hoards::{
     // Misc commands
     cmd_export, cmd_import, cmd_edit,
 
+    // Configuration
+    HoardConfig,
+
     Database,
 };
 
@@ -443,6 +456,52 @@ fn programmatic_usage() -> Result<()> {
 
     Ok(())
 }
+```
+
+## Configuration
+
+### `HoardConfig`
+
+Application configuration loaded from `~/.config/hoards/config.toml`.
+
+```rust
+use hoards::{HoardConfig, AiProvider};
+use hoards::config::{UsageConfig, UsageMode};
+
+fn config_examples() -> Result<()> {
+    // Load config (creates default if missing)
+    let config = HoardConfig::load()?;
+
+    // Check AI provider
+    println!("AI provider: {}", config.ai.provider);
+
+    // Check usage tracking mode
+    match &config.usage.mode {
+        Some(UsageMode::Scan) => println!("Using history scan mode"),
+        Some(UsageMode::Hook) => println!("Using shell hook mode"),
+        None => println!("Usage tracking not configured"),
+    }
+
+    // Modify and save
+    let mut config = HoardConfig::load()?;
+    config.ai.provider = AiProvider::Claude;
+    config.save()?;
+
+    Ok(())
+}
+```
+
+### Config File Format
+
+```toml
+# ~/.config/hoards/config.toml
+
+[ai]
+provider = "claude"  # claude, gemini, codex, none
+
+[usage]
+mode = "hook"        # scan, hook
+shell = "fish"       # fish, bash, zsh (for hook mode)
 ```
 
 ## Error Handling
