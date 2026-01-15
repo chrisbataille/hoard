@@ -146,6 +146,7 @@ pub fn cmd_bundle_show(db: &Database, name: &str) -> Result<()> {
     }
 
     println!("{table}");
+    crate::icons::print_legend_compact();
     println!(
         "{} {}/{} installed",
         ">".cyan(),

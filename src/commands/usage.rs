@@ -294,7 +294,7 @@ pub fn cmd_unused(db: &Database) -> Result<()> {
     }
 
     println!("{table}");
-    println!();
+    crate::icons::print_legend_compact();
     println!(
         "{} Found {} unused tool{}",
         "!".yellow(),
