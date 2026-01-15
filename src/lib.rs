@@ -21,9 +21,10 @@ pub use commands::{
     cmd_config_edit, cmd_config_link, cmd_config_list, cmd_config_show, cmd_config_status,
     cmd_config_sync, cmd_config_unlink, cmd_doctor, cmd_edit, cmd_export, cmd_gh_backfill,
     cmd_gh_fetch, cmd_gh_info, cmd_gh_rate_limit, cmd_gh_search, cmd_gh_sync, cmd_import,
-    cmd_install, cmd_labels, cmd_recommend, cmd_uninstall, cmd_unused, cmd_upgrade, cmd_usage_scan,
-    cmd_usage_show, cmd_usage_tool, get_install_command, get_safe_install_command,
-    get_safe_uninstall_command, validate_package_name,
+    cmd_install, cmd_labels, cmd_recommend, cmd_uninstall, cmd_unused, cmd_upgrade,
+    cmd_usage_config, cmd_usage_init, cmd_usage_log, cmd_usage_reset, cmd_usage_scan,
+    cmd_usage_show, cmd_usage_tool, ensure_usage_configured, get_install_command,
+    get_safe_install_command, get_safe_uninstall_command, validate_package_name,
 };
 pub use config::{AiProvider, HoardConfig};
 pub use db::{CachedExtraction, Database};

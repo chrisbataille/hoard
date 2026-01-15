@@ -311,6 +311,107 @@ hoards bundle install modern-unix --force
 
 ---
 
+## Usage Tracking
+
+Hoards tracks how often you use your tools. There are two tracking modes:
+
+### Tracking Modes
+
+**Scan Mode (Manual)**: Periodically parse your shell history files.
+```bash
+hoards usage config --mode scan
+hoards usage scan  # Run periodically
+```
+
+**Hook Mode (Automatic)**: Real-time tracking via shell hooks (recommended).
+```bash
+hoards usage config --mode hook
+```
+
+### Setting Up Hook Mode
+
+When you switch to hook mode, hoards will offer to set up your shell automatically:
+
+```bash
+$ hoards usage config --mode hook
+
+> Switching to hook mode...
+> Detected shell: zsh
+
+? Add hook to ~/.zshrc automatically? [Y/n] y
+
+> Adding hook to ~/.zshrc...
++ Hook added successfully!
+
+> Restart your shell or run: source ~/.zshrc
++ Configuration saved.
+```
+
+**Supported shells:**
+- **Fish**: Adds hook to `~/.config/fish/config.fish`
+- **Zsh**: Adds hook to `~/.zshrc`
+- **Bash**: Downloads `bash-preexec` and adds hook to `~/.bashrc`
+
+### Manual Hook Setup
+
+If you prefer manual setup, decline the automatic option and add the hook yourself:
+
+**Fish** (`~/.config/fish/config.fish`):
+```fish
+function __hoard_log --on-event fish_preexec
+    command hoards usage log "$argv[1]" &>/dev/null &
+    disown 2>/dev/null
+end
+```
+
+**Zsh** (`~/.zshrc`):
+```zsh
+preexec() { command hoards usage log "$1" &>/dev/null & }
+```
+
+**Bash** (`~/.bashrc`):
+```bash
+[[ -f ~/.bash-preexec.sh ]] && source ~/.bash-preexec.sh
+preexec() { command hoards usage log "$1" &>/dev/null & }
+```
+
+### Usage Commands
+
+```bash
+# View/change tracking configuration
+hoards usage config
+hoards usage config --mode scan
+hoards usage config --mode hook
+
+# Show hook setup instructions
+hoards usage init
+hoards usage init fish  # For specific shell
+
+# Manual history scan (scan mode)
+hoards usage scan
+hoards usage scan --dry-run  # Preview without saving
+hoards usage scan --reset    # Clear counts first
+
+# View usage statistics
+hoards usage show
+hoards usage show --limit 50
+
+# View usage for specific tool
+hoards usage tool ripgrep
+
+# Reset all counters
+hoards usage reset
+hoards usage reset --force  # Skip confirmation
+```
+
+### How It Works
+
+- **Scan mode**: Parses `~/.local/share/fish/fish_history`, `~/.bash_history`, `~/.zsh_history`
+- **Hook mode**: Shell calls `hoards usage log <cmd>` on every command (runs in background, no slowdown)
+- Both modes update the same counters - you can switch between them without losing data
+
+---
+
 ## Usage Insights
 
 The `insights` command group provides analytics about your tool usage.

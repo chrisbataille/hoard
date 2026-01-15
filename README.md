@@ -98,6 +98,26 @@ hoards insights health              # Database health check
 hoards insights stats               # Database statistics
 ```
 
+### Usage Tracking
+
+Two modes for tracking tool usage:
+
+```bash
+# Configure tracking mode
+hoards usage config                 # View current mode
+hoards usage config --mode scan     # Manual history scanning
+hoards usage config --mode hook     # Real-time shell hooks (recommended)
+
+# With hook mode, also run:
+hoards usage init                   # Set up shell hooks automatically
+
+# Manual commands
+hoards usage scan                   # Scan shell history
+hoards usage show                   # Show usage stats
+hoards usage tool <name>            # Usage for specific tool
+hoards usage reset                  # Reset all counters
+```
+
 ### Tool Management
 
 | Command | Description |

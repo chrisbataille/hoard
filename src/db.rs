@@ -974,6 +974,23 @@ impl Database {
         Ok(true)
     }
 
+    /// Match a command to a tracked tool by binary or name
+    /// Returns the tool name if found, None otherwise
+    pub fn match_command_to_tool(&self, cmd: &str) -> Result<Option<String>> {
+        // First try to match by binary name, then by tool name
+        let result = self.conn.query_row(
+            "SELECT name FROM tools WHERE binary_name = ?1 OR name = ?1 LIMIT 1",
+            [cmd],
+            |row| row.get(0),
+        );
+
+        match result {
+            Ok(name) => Ok(Some(name)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     /// Get usage stats for a tool
     pub fn get_usage(&self, tool_name: &str) -> Result<Option<ToolUsage>> {
         let mut stmt = self.conn.prepare(

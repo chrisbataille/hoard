@@ -9,7 +9,7 @@ use std::thread;
 use hoards::sources::ManualSource;
 use hoards::{
     AiCommands, AiConfigCommands, BundleCommands, Cli, Commands, ConfigCommands, Database,
-    DiscoverCommands, GhCommands, InsightsCommands, InstallSource, KNOWN_TOOLS, Tool,
+    DiscoverCommands, GhCommands, HoardConfig, InsightsCommands, InstallSource, KNOWN_TOOLS, Tool,
     UsageCommands, all_sources, cmd_ai_categorize, cmd_ai_describe, cmd_ai_extract, cmd_ai_set,
     cmd_ai_show, cmd_ai_suggest_bundle, cmd_ai_test, cmd_bundle_add, cmd_bundle_create,
     cmd_bundle_delete, cmd_bundle_install, cmd_bundle_list, cmd_bundle_remove, cmd_bundle_show,
@@ -17,8 +17,9 @@ use hoards::{
     cmd_config_status, cmd_config_sync, cmd_config_unlink, cmd_doctor, cmd_edit, cmd_export,
     cmd_gh_backfill, cmd_gh_fetch, cmd_gh_info, cmd_gh_rate_limit, cmd_gh_search, cmd_gh_sync,
     cmd_import, cmd_install, cmd_labels, cmd_recommend, cmd_uninstall, cmd_unused, cmd_upgrade,
-    cmd_usage_scan, cmd_usage_show, cmd_usage_tool, is_installed, scan_known_tools,
-    scan_missing_tools, scan_path_tools, source_for,
+    cmd_usage_config, cmd_usage_init, cmd_usage_log, cmd_usage_reset, cmd_usage_scan,
+    cmd_usage_show, cmd_usage_tool, is_installed, scan_known_tools, scan_missing_tools,
+    scan_path_tools, source_for,
 };
 
 fn main() -> Result<()> {
@@ -353,6 +354,16 @@ fn main() -> Result<()> {
             UsageCommands::Scan { dry_run, reset } => cmd_usage_scan(&db, dry_run, reset),
             UsageCommands::Show { limit } => cmd_usage_show(&db, limit),
             UsageCommands::Tool { name } => cmd_usage_tool(&db, &name),
+            UsageCommands::Log { command } => cmd_usage_log(&db, &command),
+            UsageCommands::Init { shell } => {
+                let config = HoardConfig::load()?;
+                cmd_usage_init(&config, shell)
+            }
+            UsageCommands::Config { mode } => {
+                let mut config = HoardConfig::load()?;
+                cmd_usage_config(&mut config, mode)
+            }
+            UsageCommands::Reset { force } => cmd_usage_reset(&db, force),
         },
 
         Commands::Unused => cmd_unused(&db),

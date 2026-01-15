@@ -352,3 +352,486 @@ pub fn cmd_recommend(db: &Database, count: usize) -> Result<()> {
 
     Ok(())
 }
+
+/// Log a single command usage (for shell hooks)
+/// This is called by shell preexec hooks and must be fast and silent
+pub fn cmd_usage_log(db: &Database, command: &str) -> Result<()> {
+    use crate::history::extract_command;
+
+    // Extract base command (handles sudo, env vars, etc.)
+    let cmd = match extract_command(command) {
+        Some(c) => c,
+        None => return Ok(()),
+    };
+
+    if cmd.is_empty() {
+        return Ok(());
+    }
+
+    // Fast lookup: is this a tracked tool?
+    if let Some(tool_name) = db.match_command_to_tool(cmd)? {
+        let now = chrono::Utc::now().to_rfc3339();
+        db.record_usage(&tool_name, 1, Some(&now))?;
+    }
+
+    Ok(())
+}
+
+/// Detect the current shell from environment
+fn detect_shell() -> String {
+    // Try SHELL env var first
+    if let Ok(shell) = std::env::var("SHELL") {
+        if shell.contains("fish") {
+            return "fish".to_string();
+        } else if shell.contains("zsh") {
+            return "zsh".to_string();
+        } else if shell.contains("bash") {
+            return "bash".to_string();
+        }
+    }
+
+    // Fallback: check parent process or default to bash
+    "bash".to_string()
+}
+
+/// Offer to set up shell hook automatically, or print manual instructions
+fn print_hook_instructions(shell: &str) {
+    // For bash, the setup is handled by offer_bash_preexec_install
+    if shell == "bash" {
+        return;
+    }
+
+    // For fish and zsh, offer automatic setup
+    if let Err(e) = offer_shell_hook_setup(shell) {
+        // If interactive setup fails (e.g., not a terminal), show manual instructions
+        eprintln!("{} Could not run interactive setup: {}", "!".yellow(), e);
+        print_manual_hook_instructions(shell);
+    }
+}
+
+/// Offer automatic shell hook setup for fish/zsh
+fn offer_shell_hook_setup(shell: &str) -> Result<()> {
+    use dialoguer::Confirm;
+
+    let home = dirs::home_dir().unwrap_or_default();
+
+    let (config_path, hook_code) = match shell {
+        "fish" => {
+            let path = home.join(".config/fish/config.fish");
+            let code = r#"
+# Hoards usage tracking (added by hoards)
+function __hoard_log --on-event fish_preexec
+    command hoards usage log "$argv[1]" &>/dev/null &
+    disown 2>/dev/null
+end
+"#;
+            (path, code)
+        }
+        "zsh" => {
+            let path = home.join(".zshrc");
+            let code = r#"
+# Hoards usage tracking (added by hoards)
+preexec() { command hoards usage log "$1" &>/dev/null & }
+"#;
+            (path, code)
+        }
+        _ => {
+            println!("{} Unsupported shell: {}", "!".yellow(), shell);
+            return Ok(());
+        }
+    };
+
+    // Check if hook is already installed
+    let hook_installed = if config_path.exists() {
+        let content = std::fs::read_to_string(&config_path).unwrap_or_default();
+        content.contains("hoards usage log")
+    } else {
+        false
+    };
+
+    if hook_installed {
+        println!();
+        println!(
+            "{} Hook already configured in {:?}",
+            "+".green(),
+            config_path
+        );
+        return Ok(());
+    }
+
+    println!();
+    let auto_setup = Confirm::new()
+        .with_prompt(format!("Add hook to {:?} automatically?", config_path))
+        .default(true)
+        .interact()?;
+
+    if !auto_setup {
+        print_manual_hook_instructions(shell);
+        return Ok(());
+    }
+
+    // Ensure parent directory exists (for fish)
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    // Append hook to config file
+    println!("{} Adding hook to {:?}...", ">".cyan(), config_path);
+
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&config_path)?;
+
+    use std::io::Write;
+    file.write_all(hook_code.as_bytes())?;
+
+    println!("{} Hook added successfully!", "+".green());
+    println!();
+
+    let source_cmd = match shell {
+        "fish" => "source ~/.config/fish/config.fish".to_string(),
+        _ => format!("source ~/.{}rc", shell),
+    };
+
+    println!(
+        "{} Restart your shell or run: {}",
+        ">".cyan(),
+        source_cmd.yellow()
+    );
+
+    Ok(())
+}
+
+/// Print manual hook setup instructions
+fn print_manual_hook_instructions(shell: &str) {
+    println!();
+    println!("{} Add this to your shell config:", ">".cyan());
+    println!();
+
+    match shell {
+        "fish" => {
+            println!("{}", "# Add to ~/.config/fish/config.fish".dimmed());
+            println!(r#"function __hoard_log --on-event fish_preexec"#);
+            println!(r#"    command hoards usage log "$argv[1]" &>/dev/null &"#);
+            println!(r#"    disown 2>/dev/null"#);
+            println!(r#"end"#);
+        }
+        "zsh" => {
+            println!("{}", "# Add to ~/.zshrc".dimmed());
+            println!(r#"preexec() {{"#);
+            println!(r#"    command hoards usage log "$1" &>/dev/null &"#);
+            println!(r#"}}"#);
+        }
+        "bash" => {
+            println!(
+                "{}",
+                "# Add to ~/.bashrc (after sourcing bash-preexec)".dimmed()
+            );
+            println!(r#"[[ -f ~/.bash-preexec.sh ]] && source ~/.bash-preexec.sh"#);
+            println!(r#"preexec() {{"#);
+            println!(r#"    command hoards usage log "$1" &>/dev/null &"#);
+            println!(r#"}}"#);
+        }
+        _ => {
+            println!("{} Unsupported shell: {}", "!".yellow(), shell);
+        }
+    }
+
+    println!();
+    let source_cmd = match shell {
+        "fish" => "source ~/.config/fish/config.fish",
+        _ => &format!("source ~/.{}rc", shell),
+    };
+    println!(
+        "{} After adding, restart your shell or run: {}",
+        ">".cyan(),
+        source_cmd.yellow()
+    );
+}
+
+/// Show shell hook setup instructions
+pub fn cmd_usage_init(
+    config: &crate::config::HoardConfig,
+    shell_override: Option<String>,
+) -> Result<()> {
+    use crate::config::UsageMode;
+
+    let mode = config.usage.mode.as_ref();
+
+    match mode {
+        Some(UsageMode::Scan) => {
+            println!("{} Usage tracking is set to 'scan' mode.", ">".cyan());
+            println!(
+                "  Run {} to update usage counts from shell history.",
+                "hoards usage scan".yellow()
+            );
+            println!();
+            println!(
+                "  To switch to hook mode: {}",
+                "hoards usage config --mode hook".yellow()
+            );
+        }
+        Some(UsageMode::Hook) | None => {
+            let shell = shell_override
+                .or_else(|| config.usage.shell.clone())
+                .unwrap_or_else(detect_shell);
+
+            print_hook_instructions(&shell);
+        }
+    }
+
+    Ok(())
+}
+
+/// View or change usage tracking configuration
+pub fn cmd_usage_config(
+    config: &mut crate::config::HoardConfig,
+    mode: Option<String>,
+) -> Result<()> {
+    use crate::config::UsageMode;
+
+    match mode {
+        None => {
+            // Show current config
+            println!("{}", "Usage Tracking Configuration".bold());
+            println!("{}", "-".repeat(40));
+
+            match &config.usage.mode {
+                Some(UsageMode::Scan) => {
+                    println!("  Mode:  {} (manual)", "scan".cyan());
+                    println!("  Info:  Run 'hoards usage scan' periodically");
+                }
+                Some(UsageMode::Hook) => {
+                    let shell = config.usage.shell.as_deref().unwrap_or("unknown");
+                    println!("  Mode:  {} (automatic)", "hook".cyan());
+                    println!("  Shell: {}", shell.cyan());
+                    println!("  Info:  Commands tracked in real-time via shell hook");
+                }
+                None => {
+                    println!("  Mode:  {} (not configured)", "none".yellow());
+                    println!();
+                    println!(
+                        "{} Run {} to set up usage tracking",
+                        ">".cyan(),
+                        "hoards usage config --mode <scan|hook>".yellow()
+                    );
+                }
+            }
+        }
+        Some(new_mode) => {
+            // Change mode (doesn't reset counters)
+            let mode = match new_mode.as_str() {
+                "scan" => {
+                    println!("{} Switching to scan mode...", ">".cyan());
+                    UsageMode::Scan
+                }
+                "hook" => {
+                    let shell = detect_shell();
+                    config.usage.shell = Some(shell.clone());
+
+                    println!("{} Switching to hook mode...", ">".cyan());
+                    println!("{} Detected shell: {}", ">".cyan(), shell.cyan());
+
+                    // Offer bash-preexec installation for bash users
+                    if shell == "bash" {
+                        offer_bash_preexec_install()?;
+                    }
+
+                    print_hook_instructions(&shell);
+                    UsageMode::Hook
+                }
+                _ => {
+                    anyhow::bail!("Invalid mode '{}'. Use 'scan' or 'hook'.", new_mode);
+                }
+            };
+
+            config.usage.mode = Some(mode);
+            config.save()?;
+            println!("{} Configuration saved.", "+".green());
+        }
+    }
+
+    Ok(())
+}
+
+/// Offer to install bash-preexec and configure .bashrc for bash users
+fn offer_bash_preexec_install() -> Result<()> {
+    use dialoguer::Confirm;
+
+    let home = dirs::home_dir().unwrap_or_default();
+    let preexec_path = home.join(".bash-preexec.sh");
+    let bashrc_path = home.join(".bashrc");
+
+    println!();
+    println!(
+        "{} Bash requires {} for shell hooks.",
+        "!".yellow(),
+        "bash-preexec".cyan()
+    );
+    println!("  https://github.com/rcaloras/bash-preexec");
+    println!();
+
+    // Check if bash-preexec is already downloaded
+    let preexec_exists = preexec_path.exists();
+
+    // Check if hook is already in .bashrc
+    let hook_installed = if bashrc_path.exists() {
+        let content = std::fs::read_to_string(&bashrc_path).unwrap_or_default();
+        content.contains("hoards usage log")
+    } else {
+        false
+    };
+
+    if preexec_exists && hook_installed {
+        println!("{} bash-preexec and hook already configured.", "+".green());
+        return Ok(());
+    }
+
+    // Offer automatic setup
+    let auto_setup = Confirm::new()
+        .with_prompt("Set up bash-preexec and hook automatically?")
+        .default(true)
+        .interact()?;
+
+    if !auto_setup {
+        println!();
+        println!("{} Manual setup required:", ">".cyan());
+        println!();
+        println!("1. Download bash-preexec:");
+        println!("   curl -o ~/.bash-preexec.sh \\");
+        println!(
+            "     https://raw.githubusercontent.com/rcaloras/bash-preexec/master/bash-preexec.sh"
+        );
+        println!();
+        println!("2. Add to ~/.bashrc:");
+        println!("   [[ -f ~/.bash-preexec.sh ]] && source ~/.bash-preexec.sh");
+        println!("   preexec() {{ command hoards usage log \"$1\" &>/dev/null & }}");
+        println!();
+        return Ok(());
+    }
+
+    // Download bash-preexec.sh if needed
+    if !preexec_exists {
+        println!("{} Downloading bash-preexec...", ">".cyan());
+
+        let url = "https://raw.githubusercontent.com/rcaloras/bash-preexec/master/bash-preexec.sh";
+        let mut response = ureq::get(url).call()?;
+        let content = response.body_mut().read_to_string()?;
+
+        std::fs::write(&preexec_path, content)?;
+        println!("{} Installed to ~/.bash-preexec.sh", "+".green());
+    } else {
+        println!("{} bash-preexec.sh already exists.", "+".green());
+    }
+
+    // Add hook to .bashrc if needed
+    if !hook_installed {
+        println!("{} Adding hook to ~/.bashrc...", ">".cyan());
+
+        let hook_code = r#"
+
+# Hoards usage tracking (added by hoards)
+[[ -f ~/.bash-preexec.sh ]] && source ~/.bash-preexec.sh
+preexec() { command hoards usage log "$1" &>/dev/null & }
+"#;
+
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&bashrc_path)?;
+
+        use std::io::Write;
+        file.write_all(hook_code.as_bytes())?;
+
+        println!("{} Hook added to ~/.bashrc", "+".green());
+    } else {
+        println!("{} Hook already in ~/.bashrc", "+".green());
+    }
+
+    println!();
+    println!(
+        "{} Restart your shell or run: {}",
+        ">".cyan(),
+        "source ~/.bashrc".yellow()
+    );
+
+    Ok(())
+}
+
+/// Reset all usage counters to zero
+pub fn cmd_usage_reset(db: &Database, force: bool) -> Result<()> {
+    use dialoguer::Confirm;
+
+    if !force {
+        let confirm = Confirm::new()
+            .with_prompt("Reset all usage counters to zero?")
+            .default(false)
+            .interact()?;
+
+        if !confirm {
+            println!("{} Cancelled.", "!".yellow());
+            return Ok(());
+        }
+    }
+
+    db.clear_usage()?;
+    println!("{} Usage counters reset.", "+".green());
+    Ok(())
+}
+
+/// Ensure usage tracking is configured (interactive setup if not)
+pub fn ensure_usage_configured(config: &mut crate::config::HoardConfig) -> Result<()> {
+    use crate::config::UsageMode;
+    use dialoguer::Select;
+
+    if config.usage.mode.is_some() {
+        return Ok(()); // Already configured
+    }
+
+    println!("{} Usage tracking is not configured.", ">".cyan());
+    println!();
+    println!("How would you like to track tool usage?");
+    println!();
+
+    let items = vec![
+        "History scan (manual) - Run 'hoards usage scan' periodically",
+        "Shell hook (automatic) - Track commands in real-time",
+    ];
+
+    let selection = Select::new()
+        .with_prompt("Select tracking mode")
+        .items(&items)
+        .default(0)
+        .interact()?;
+
+    let mode = if selection == 0 {
+        println!();
+        println!("{} Selected: history scan mode", "+".green());
+        println!(
+            "  Run {} to scan your shell history.",
+            "hoards usage scan".yellow()
+        );
+        UsageMode::Scan
+    } else {
+        let shell = detect_shell();
+        config.usage.shell = Some(shell.clone());
+
+        println!();
+        println!("{} Selected: shell hook mode", "+".green());
+        println!("{} Detected shell: {}", ">".cyan(), shell.cyan());
+
+        if shell == "bash" {
+            offer_bash_preexec_install()?;
+        }
+
+        print_hook_instructions(&shell);
+        UsageMode::Hook
+    };
+
+    config.usage.mode = Some(mode);
+    config.save()?;
+    println!("{} Configuration saved.", "+".green());
+
+    Ok(())
+}
