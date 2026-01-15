@@ -501,7 +501,7 @@ fn cmd_list(
                     Cell::new("Name").fg(Color::Cyan),
                     Cell::new("Cat").fg(Color::Cyan),
                     Cell::new("Src").fg(Color::Cyan),
-                    Cell::new("").fg(Color::Cyan), // Status icon
+                    Cell::new("✓").fg(Color::Cyan),
                     Cell::new("Description").fg(Color::Cyan),
                 ]);
 

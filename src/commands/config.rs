@@ -181,7 +181,7 @@ pub fn cmd_config_list(db: &Database, broken_only: bool, format: &str) -> Result
             Cell::new("⚙ Config").fg(Color::Cyan),
             Cell::new("Target").fg(Color::Cyan),
             Cell::new("Source").fg(Color::Cyan),
-            Cell::new("").fg(Color::Cyan),
+            Cell::new("✓").fg(Color::Cyan),
         ]);
 
     let mut shown = 0;

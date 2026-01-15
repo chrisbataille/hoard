@@ -118,7 +118,7 @@ pub fn cmd_bundle_show(db: &Database, name: &str) -> Result<()> {
         .set_header(vec![
             Cell::new("Tool").fg(Color::Cyan),
             Cell::new("Src").fg(Color::Cyan),
-            Cell::new("").fg(Color::Cyan),
+            Cell::new("✓").fg(Color::Cyan),
         ]);
 
     let mut installed_count = 0;
