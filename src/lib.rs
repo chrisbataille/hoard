@@ -81,7 +81,7 @@ pub use commands::{cmd_completions_install, cmd_completions_status, cmd_completi
 pub use config::{AiProvider, HoardConfig};
 
 // Database
-pub use db::{CachedExtraction, Database};
+pub use db::{CachedExtraction, Database, GitHubInfo, GitHubInfoInput, ToolUsage};
 
 // Models
 pub use models::{Bundle, Config, InstallSource, Interest, Tool};

@@ -239,7 +239,7 @@ src/
 Track issues here until resolved:
 
 - [x] **main.rs bloat**: Reduced from ~1692 to 386 lines - dispatch only
-- [ ] **db.rs God Object**: Consider repository pattern split
+- [x] **db.rs God Object**: Split into 9 focused modules in `src/db/`
 - [ ] **Sequential HTTP in sources**: Need parallel fetching
 - [x] **Missing integration tests**: Added `tests/` directory with security and CLI tests
 - [x] **Shell injection vulnerabilities**: Fixed in ai.rs (4 locations)
