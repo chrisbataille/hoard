@@ -353,6 +353,10 @@ pub struct App {
     // Mouse interaction state
     pub last_list_area: Option<(u16, u16, u16, u16)>, // (x, y, width, height) of tool list
     pub last_tab_area: Option<(u16, u16, u16, u16)>,  // (x, y, width, height) of tabs
+
+    // Feature availability status (for footer display)
+    pub ai_available: bool, // AI provider is configured
+    pub gh_available: bool, // GitHub CLI is installed
 }
 
 impl App {
@@ -374,6 +378,12 @@ impl App {
             .collect();
 
         let tools = all_tools.clone();
+
+        // Check feature availability
+        let ai_available = crate::config::HoardConfig::load()
+            .map(|c| c.ai.provider != crate::config::AiProvider::None)
+            .unwrap_or(false);
+        let gh_available = which::which("gh").is_ok();
 
         Ok(Self {
             running: true,
@@ -405,6 +415,8 @@ impl App {
             history: ActionHistory::new(50), // Keep 50 actions max
             last_list_area: None,
             last_tab_area: None,
+            ai_available,
+            gh_available,
         })
     }
 
@@ -940,10 +952,18 @@ impl App {
 
     /// Handle mouse click on list item
     pub fn click_list_item(&mut self, row: u16) {
-        // row is relative to list area top
-        let target_index = self.list_offset + row as usize;
-        if target_index < self.tools.len() {
-            self.selected_index = target_index;
+        if self.tab == Tab::Bundles {
+            // Handle bundle list clicks
+            let target_index = row as usize; // Bundles don't scroll currently
+            if target_index < self.bundles.len() {
+                self.bundle_selected = target_index;
+            }
+        } else {
+            // Handle tool list clicks
+            let target_index = self.list_offset + row as usize;
+            if target_index < self.tools.len() {
+                self.selected_index = target_index;
+            }
         }
     }
 

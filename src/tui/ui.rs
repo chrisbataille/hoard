@@ -151,9 +151,12 @@ fn render_body(frame: &mut Frame, app: &mut App, db: &Database, theme: &Theme, a
                 .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
                 .split(area);
 
+            // Store list area for mouse interaction
+            app.set_list_area(chunks[0].x, chunks[0].y, chunks[0].width, chunks[0].height);
             render_bundle_list(frame, app, theme, chunks[0]);
             render_bundle_details(frame, app, db, theme, chunks[1]);
         } else {
+            app.set_list_area(area.x, area.y, area.width, area.height);
             render_bundle_list(frame, app, theme, area);
         }
         return;
@@ -709,20 +712,54 @@ fn render_bundle_details(frame: &mut Frame, app: &App, db: &Database, theme: &Th
 }
 
 fn render_footer(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
-    // Show status message if present (takes priority)
+    // Right-aligned status: AI icon, GH icon, version (always shown)
+    let ai_color = if app.ai_available {
+        theme.green
+    } else {
+        theme.surface1
+    };
+    let gh_color = if app.gh_available {
+        theme.green
+    } else {
+        theme.surface1
+    };
+    let version = env!("CARGO_PKG_VERSION");
+
+    let right_status = vec![
+        Span::styled("🤖", Style::default().fg(ai_color)),
+        Span::styled(" ", Style::default()),
+        Span::styled("\u{f09b}", Style::default().fg(gh_color)), // GitHub nerd font icon
+        Span::styled("  ", Style::default()),
+        Span::styled(format!("v{}", version), Style::default().fg(theme.subtext0)),
+        Span::styled(" ", Style::default()),
+    ];
+    let right_width = 2 + 1 + 1 + 2 + 1 + version.len() + 1; // "🤖   vX.X.X "
+
+    // Show status message if present (takes priority for left side)
     if let Some(status) = &app.status_message {
         let color = if status.is_error {
             theme.red
         } else {
             theme.green
         };
-        let footer = Paragraph::new(Line::from(vec![
+        let left_content = vec![
             Span::styled(" ", Style::default()),
             Span::styled(&status.text, Style::default().fg(color)),
-        ]))
-        .style(Style::default().bg(theme.surface0));
+        ];
 
-        frame.render_widget(footer, area);
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Min(0), Constraint::Length(right_width as u16)])
+            .split(area);
+
+        frame.render_widget(
+            Paragraph::new(Line::from(left_content)).style(Style::default().bg(theme.surface0)),
+            chunks[0],
+        );
+        frame.render_widget(
+            Paragraph::new(Line::from(right_status)).style(Style::default().bg(theme.surface0)),
+            chunks[1],
+        );
         return;
     }
 
@@ -786,9 +823,20 @@ fn render_footer(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         }
     };
 
-    let footer = Paragraph::new(Line::from(mode_text)).style(Style::default().bg(theme.surface0));
+    // Split footer into left (shortcuts) and right (status)
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(0), Constraint::Length(right_width as u16)])
+        .split(area);
 
-    frame.render_widget(footer, area);
+    frame.render_widget(
+        Paragraph::new(Line::from(mode_text)).style(Style::default().bg(theme.surface0)),
+        chunks[0],
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(right_status)).style(Style::default().bg(theme.surface0)),
+        chunks[1],
+    );
 }
 
 fn render_help_overlay(frame: &mut Frame, theme: &Theme, area: Rect) {
