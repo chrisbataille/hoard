@@ -188,6 +188,15 @@ pub enum Commands {
     },
 
     // ============================================
+    // TUI - Terminal User Interface
+    // ============================================
+    /// Launch the interactive terminal UI
+    ///
+    /// A full-featured terminal interface for browsing and managing tools.
+    /// Supports vim-style navigation (j/k), tabs, search, and more.
+    Tui,
+
+    // ============================================
     // INSTALL/UNINSTALL/UPGRADE
     // ============================================
     /// Install a tool
