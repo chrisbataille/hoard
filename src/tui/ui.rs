@@ -176,7 +176,7 @@ fn render_body(frame: &mut Frame, app: &mut App, db: &Database, theme: &Theme, a
     }
 }
 
-fn render_tool_list(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
+fn render_tool_list(frame: &mut Frame, app: &mut App, theme: &Theme, area: Rect) {
     // Special handling for Updates tab when not checked yet
     if app.tab == super::app::Tab::Updates && !app.updates_checked {
         let message = if app.updates_loading {
@@ -326,10 +326,12 @@ fn render_tool_list(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let mut state = ListState::default();
     state.select(Some(app.selected_index));
 
-    // Scroll list to keep selection visible
+    // Scroll list to keep selection visible and store offset for mouse clicks
     let visible_height = area.height.saturating_sub(2) as usize; // Subtract border
     if visible_height > 0 {
-        *state.offset_mut() = app.selected_index.saturating_sub(visible_height / 2);
+        let offset = app.selected_index.saturating_sub(visible_height / 2);
+        *state.offset_mut() = offset;
+        app.list_offset = offset; // Store for mouse click handling
     }
 
     frame.render_stateful_widget(list, area, &mut state);

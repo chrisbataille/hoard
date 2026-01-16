@@ -949,18 +949,28 @@ impl App {
 
     /// Handle mouse click on tab
     pub fn click_tab(&mut self, x: u16, db: &Database) {
-        // Simple heuristic: divide tab area into 4 equal parts
-        if let Some((area_x, _, width, _)) = self.last_tab_area {
-            let relative_x = x.saturating_sub(area_x);
-            let tab_width = width / 4;
-            let tab_index = relative_x / tab_width.max(1);
+        if let Some((area_x, _, _, _)) = self.last_tab_area {
+            // Account for block border (1 char) and title " hoard " (7 chars)
+            let content_start = area_x + 1; // Skip left border
+            let relative_x = x.saturating_sub(content_start) as usize;
 
-            match tab_index {
-                0 => self.switch_tab(Tab::Installed, db),
-                1 => self.switch_tab(Tab::Available, db),
-                2 => self.switch_tab(Tab::Updates, db),
-                3 => self.switch_tab(Tab::Bundles, db),
-                _ => {}
+            // Tab titles with padding: " Installed ", " Available ", " Updates ", " Bundles "
+            // Each title is wrapped with spaces, so: len + 2
+            let tab_widths: Vec<usize> = Tab::all()
+                .iter()
+                .map(|t| t.title().len() + 2) // " title "
+                .collect();
+
+            // Find which tab was clicked by accumulating widths
+            let mut accumulated = 0;
+            for (i, &width) in tab_widths.iter().enumerate() {
+                if relative_x < accumulated + width {
+                    if let Some(tab) = Tab::from_index(i) {
+                        self.switch_tab(tab, db);
+                    }
+                    return;
+                }
+                accumulated += width;
             }
         }
     }
