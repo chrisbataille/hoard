@@ -950,27 +950,30 @@ impl App {
     /// Handle mouse click on tab
     pub fn click_tab(&mut self, x: u16, db: &Database) {
         if let Some((area_x, _, _, _)) = self.last_tab_area {
-            // Account for block border (1 char) and title " hoard " (7 chars)
-            let content_start = area_x + 1; // Skip left border
+            // Account for block border (1 char on left)
+            let content_start = area_x + 1;
             let relative_x = x.saturating_sub(content_start) as usize;
 
-            // Tab titles with padding: " Installed ", " Available ", " Updates ", " Bundles "
-            // Each title is wrapped with spaces, so: len + 2
-            let tab_widths: Vec<usize> = Tab::all()
-                .iter()
-                .map(|t| t.title().len() + 2) // " title "
-                .collect();
+            // Tab layout (with padding("", "") set in UI):
+            // Each tab: " title " = title.len() + 2
+            // Divider between tabs: "│" (1 char)
+            let tabs = Tab::all();
+            let mut pos = 0;
 
-            // Find which tab was clicked by accumulating widths
-            let mut accumulated = 0;
-            for (i, &width) in tab_widths.iter().enumerate() {
-                if relative_x < accumulated + width {
-                    if let Some(tab) = Tab::from_index(i) {
-                        self.switch_tab(tab, db);
-                    }
+            for (i, tab) in tabs.iter().enumerate() {
+                let tab_width = tab.title().len() + 2; // " title "
+
+                if relative_x >= pos && relative_x < pos + tab_width {
+                    self.switch_tab(*tab, db);
                     return;
                 }
-                accumulated += width;
+
+                pos += tab_width;
+
+                // Add divider width (1 char) after each tab except the last
+                if i < tabs.len() - 1 {
+                    pos += 1;
+                }
             }
         }
     }

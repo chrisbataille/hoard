@@ -133,6 +133,7 @@ fn render_header(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
                 )),
         )
         .highlight_style(Style::default().fg(theme.blue))
+        .padding("", "") // No extra padding - we include spaces in titles
         .select(app.tab.index());
 
     frame.render_widget(tabs, area);
