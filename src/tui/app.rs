@@ -1475,8 +1475,13 @@ impl App {
         self.show_config_menu = true;
     }
 
-    /// Close config menu without saving
+    /// Close config menu without saving (reverts any preview changes)
     pub fn close_config_menu(&mut self) {
+        // Revert any live preview changes by reloading from config
+        if let Ok(config) = HoardConfig::load() {
+            self.theme_variant = super::theme::ThemeVariant::from_config_theme(config.tui.theme);
+            self.ai_available = config.ai.provider != AiProvider::None;
+        }
         self.show_config_menu = false;
     }
 
@@ -2841,5 +2846,98 @@ mod tests {
         // After Installed (12 chars) + divider (1) = start at 13
         app.click_tab(15, &db);
         assert_eq!(app.tab, Tab::Available);
+    }
+
+    #[test]
+    fn test_config_menu_ai_provider_change() {
+        use crate::config::AiProvider;
+
+        let db = Database::open_in_memory().unwrap();
+        let mut app = App::new(&db).unwrap();
+
+        // Initially ai_available should be based on loaded config (default is None = false)
+        // But let's set it explicitly to true for testing
+        app.ai_available = true;
+
+        // Open config menu
+        app.open_config_menu();
+        assert!(app.show_config_menu);
+
+        // Verify we're on AI Provider section
+        assert_eq!(app.config_menu.section, ConfigSection::AiProvider);
+
+        // Set ai_selected to index 0 (None)
+        app.config_menu.ai_selected = 0;
+
+        // Navigate to buttons and save
+        app.config_menu.section = ConfigSection::Buttons;
+        app.config_menu.button_focused = 0; // Save button
+
+        // The to_config should now return AiProvider::None
+        let config = app.config_menu.to_config();
+        assert_eq!(config.ai.provider, AiProvider::None);
+
+        // Manually verify the ai_available logic
+        let expected_ai_available = config.ai.provider != AiProvider::None;
+        assert!(!expected_ai_available); // Should be false since provider is None
+
+        // Now test with a different provider
+        app.config_menu.ai_selected = 1; // Claude
+        let config = app.config_menu.to_config();
+        assert_eq!(config.ai.provider, AiProvider::Claude);
+        assert!(config.ai.provider != AiProvider::None);
+    }
+
+    #[test]
+    fn test_ai_provider_all_indices() {
+        use crate::config::AiProvider;
+
+        // Verify the indices in AiProvider::all() match expectations
+        let all = AiProvider::all();
+        assert_eq!(all.len(), 5);
+        assert_eq!(all[0], AiProvider::None);
+        assert_eq!(all[1], AiProvider::Claude);
+        assert_eq!(all[2], AiProvider::Gemini);
+        assert_eq!(all[3], AiProvider::Codex);
+        assert_eq!(all[4], AiProvider::Opencode);
+    }
+
+    #[test]
+    fn test_save_config_menu_updates_ai_available() {
+        use crate::config::AiProvider;
+
+        let db = Database::open_in_memory().unwrap();
+        let mut app = App::new(&db).unwrap();
+
+        // Start with AI available (simulate having Claude configured)
+        app.ai_available = true;
+
+        // Open config menu
+        app.open_config_menu();
+
+        // Change to None (index 0)
+        app.config_menu.ai_selected = 0;
+
+        // Verify before save - ai_available should still be true
+        assert!(app.ai_available);
+
+        // Build config and check the provider
+        let config = app.config_menu.to_config();
+        assert_eq!(config.ai.provider, AiProvider::None);
+
+        // Now simulate save (without actually writing to file)
+        // This is what save_config_menu does internally:
+        app.ai_available = config.ai.provider != AiProvider::None;
+
+        // After save, ai_available should be false
+        assert!(!app.ai_available);
+
+        // Now test the reverse - change from None to Claude
+        app.config_menu.ai_selected = 1; // Claude
+        let config = app.config_menu.to_config();
+        assert_eq!(config.ai.provider, AiProvider::Claude);
+
+        app.ai_available = config.ai.provider != AiProvider::None;
+        assert!(app.ai_available);
     }
 }

@@ -97,18 +97,32 @@ fn handle_config_menu(app: &mut App, key: KeyEvent) {
         // Navigate within section (j/k or arrows)
         KeyCode::Char('j') | KeyCode::Down => {
             app.config_menu_next_item();
-            // Live preview theme changes
-            if app.config_menu.section == ConfigSection::Theme {
-                let theme = TuiTheme::from_index(app.config_menu.theme_selected);
-                app.theme_variant = super::theme::ThemeVariant::from_config_theme(theme);
+            // Live preview changes
+            match app.config_menu.section {
+                ConfigSection::Theme => {
+                    let theme = TuiTheme::from_index(app.config_menu.theme_selected);
+                    app.theme_variant = super::theme::ThemeVariant::from_config_theme(theme);
+                }
+                ConfigSection::AiProvider => {
+                    // Live preview AI provider status indicator
+                    app.ai_available = app.config_menu.ai_selected != 0; // 0 = None
+                }
+                _ => {}
             }
         }
         KeyCode::Char('k') | KeyCode::Up => {
             app.config_menu_prev_item();
-            // Live preview theme changes
-            if app.config_menu.section == ConfigSection::Theme {
-                let theme = TuiTheme::from_index(app.config_menu.theme_selected);
-                app.theme_variant = super::theme::ThemeVariant::from_config_theme(theme);
+            // Live preview changes
+            match app.config_menu.section {
+                ConfigSection::Theme => {
+                    let theme = TuiTheme::from_index(app.config_menu.theme_selected);
+                    app.theme_variant = super::theme::ThemeVariant::from_config_theme(theme);
+                }
+                ConfigSection::AiProvider => {
+                    // Live preview AI provider status indicator
+                    app.ai_available = app.config_menu.ai_selected != 0; // 0 = None
+                }
+                _ => {}
             }
         }
 
