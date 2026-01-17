@@ -10,6 +10,7 @@ pub mod icons;
 pub mod models;
 pub mod scanner;
 pub mod sources;
+pub mod tui;
 pub mod updates;
 
 pub use cli::{
@@ -34,6 +35,12 @@ pub use commands::{cmd_cleanup, cmd_init, cmd_maintain};
 
 // Updates commands
 pub use commands::{cmd_updates, cmd_updates_cross, cmd_updates_tracked};
+
+// Updates types and functions (for TUI)
+pub use updates::{
+    Update, check_apt_updates, check_brew_updates, check_cargo_updates, check_npm_updates,
+    check_pip_updates,
+};
 
 // Install commands
 pub use commands::{
@@ -81,7 +88,7 @@ pub use commands::{cmd_completions_install, cmd_completions_status, cmd_completi
 pub use config::{AiProvider, HoardConfig};
 
 // Database
-pub use db::{CachedExtraction, Database};
+pub use db::{CachedExtraction, Database, GitHubInfo, GitHubInfoInput, ToolUsage};
 
 // Models
 pub use models::{Bundle, Config, InstallSource, Interest, Tool};

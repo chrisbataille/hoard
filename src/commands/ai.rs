@@ -36,7 +36,7 @@ pub fn cmd_ai_set(provider: &str) -> Result<()> {
     }
 
     let mut config = HoardConfig::load()?;
-    config.set_ai_provider(ai_provider.clone());
+    config.set_ai_provider(ai_provider);
     config.save()?;
 
     println!("{} AI provider set to '{}'", "+".green(), ai_provider);

@@ -254,6 +254,11 @@ fn main() -> Result<()> {
         Commands::Cleanup { force, dry_run } => cmd_cleanup(&db, force, dry_run),
 
         // ============================================
+        // TUI
+        // ============================================
+        Commands::Tui => hoards::tui::run(&db),
+
+        // ============================================
         // INSTALL/UNINSTALL/UPGRADE
         // ============================================
         Commands::Install {

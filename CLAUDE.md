@@ -239,8 +239,8 @@ src/
 Track issues here until resolved:
 
 - [x] **main.rs bloat**: Reduced from ~1692 to 386 lines - dispatch only
-- [ ] **db.rs God Object**: Consider repository pattern split
-- [ ] **Sequential HTTP in sources**: Need parallel fetching
+- [x] **db.rs God Object**: Split into 9 focused modules in `src/db/`
+- [x] **Sequential HTTP in sources**: Parallel fetching in cmd_scan via thread::scope
 - [x] **Missing integration tests**: Added `tests/` directory with security and CLI tests
 - [x] **Shell injection vulnerabilities**: Fixed in ai.rs (4 locations)
 - [x] **atty dependency**: Replaced with std::io::IsTerminal
