@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/chrisbataille/hoards/main/schema/custom-theme.schema.json",
+  "title": "Hoards Custom Theme",
+  "description": "Custom color theme definition for the hoards TUI. Place this file at ~/.config/hoards/custom-theme.json",
+  "type": "object",
+  "required": [
+    "name",
+    "base",
+    "surface0",
+    "surface1",
+    "text",
+    "subtext0",
+    "blue",
+    "green",
+    "yellow",
+    "red",
+    "mauve",
+    "peach",
+    "teal"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema reference for validation and IDE support"
+    },
+    "name": {
+      "type": "string",
+      "description": "Display name for your custom theme",
+      "examples": ["My Custom Theme"]
+    },
+    "base": {
+      "$ref": "#/$defs/color",
+      "description": "Main background color for the entire TUI. Used for the main window background."
+    },
+    "surface0": {
+      "$ref": "#/$defs/color",
+      "description": "Slightly elevated surface color. Used for list items, cards, and popup backgrounds."
+    },
+    "surface1": {
+      "$ref": "#/$defs/color",
+      "description": "Borders, separators, and inactive elements. Used for divider lines and unfocused borders."
+    },
+    "text": {
+      "$ref": "#/$defs/color",
+      "description": "Primary text color. Used for main content, tool names, and important text."
+    },
+    "subtext0": {
+      "$ref": "#/$defs/color",
+      "description": "Secondary/dimmed text. Used for descriptions, hints, less important labels, and placeholder text."
+    },
+    "blue": {
+      "$ref": "#/$defs/color",
+      "description": "Links, highlights, and selected items. Used for focused elements, active tab indicators, and cursor highlights."
+    },
+    "green": {
+      "$ref": "#/$defs/color",
+      "description": "Success states and installed tools. Used for 'Installed' status, success messages, and positive indicators."
+    },
+    "yellow": {
+      "$ref": "#/$defs/color",
+      "description": "Warnings, stars/favorites, and attention indicators. Used for the star icon on favorited tools and warning messages."
+    },
+    "red": {
+      "$ref": "#/$defs/color",
+      "description": "Errors and destructive actions. Used for uninstall confirmations, error messages, and critical alerts."
+    },
+    "mauve": {
+      "$ref": "#/$defs/color",
+      "description": "Categories and tags. Used for tool category labels and classification badges."
+    },
+    "peach": {
+      "$ref": "#/$defs/color",
+      "description": "Source badges. Used for package source indicators (cargo, apt, npm, pip, etc.)."
+    },
+    "teal": {
+      "$ref": "#/$defs/color",
+      "description": "Sparklines and metrics. Used for usage graphs, sparkline charts, and numerical metrics."
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "color": {
+      "type": "object",
+      "description": "RGB color value with components from 0-255",
+      "required": ["r", "g", "b"],
+      "properties": {
+        "r": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255,
+          "description": "Red component (0-255)"
+        },
+        "g": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255,
+          "description": "Green component (0-255)"
+        },
+        "b": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255,
+          "description": "Blue component (0-255)"
+        }
+      },
+      "additionalProperties": false,
+      "examples": [
+        { "r": 30, "g": 30, "b": 46 },
+        { "r": 137, "g": 180, "b": 250 }
+      ]
+    }
+  }
+}

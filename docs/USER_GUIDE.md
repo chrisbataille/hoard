@@ -9,11 +9,14 @@ A comprehensive guide to using hoards for managing your CLI tools.
 3. [Discovering Tools](#discovering-tools)
 4. [Managing Tools](#managing-tools)
 5. [Using Bundles](#using-bundles)
-6. [Usage Insights](#usage-insights)
-7. [AI Features](#ai-features)
-8. [Config Management](#config-management)
-9. [Maintenance](#maintenance)
-10. [Troubleshooting](#troubleshooting)
+6. [Usage Tracking](#usage-tracking)
+7. [Usage Insights](#usage-insights)
+8. [Package Managers](#package-managers)
+9. [AI Features](#ai-features)
+10. [Config Management](#config-management)
+11. [Terminal UI](#terminal-ui)
+12. [Maintenance](#maintenance)
+13. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -502,9 +505,124 @@ hoards insights stats
 
 ---
 
+## Package Managers
+
+Hoards supports multiple package managers for tracking and managing tools.
+
+### Supported Sources
+
+| Source | Platform | Scan | Updates | Install | Notes |
+|--------|----------|------|---------|---------|-------|
+| **Cargo** | Cross-platform | ✅ | ✅ | ✅ | Rust packages from crates.io |
+| **Apt** | Debian/Ubuntu | ✅ | ✅ | ✅ | System packages |
+| **Pip** | Cross-platform | ✅ | ✅ | ✅ | Python packages from PyPI |
+| **Npm** | Cross-platform | ✅ | ✅ | ✅ | Node.js global packages |
+| **Brew** | macOS/Linux | ✅ | ✅ | ✅ | Homebrew formulae |
+| **Flatpak** | Linux | ✅ | ✅ | ✅ | Universal Linux packages |
+| **Manual** | Any | ❌ | ❌ | ❌ | User-tracked tools |
+
+### How Scanning Works
+
+Each source uses different detection methods:
+
+- **Cargo**: Scans `~/.cargo/bin/` for binaries
+- **Apt**: Queries `dpkg` for installed packages
+- **Pip**: Runs `pip list` to enumerate packages
+- **Npm**: Runs `npm list -g` for global packages
+- **Brew**: Runs `brew list` for installed formulae
+- **Flatpak**: Runs `flatpak list` for installed apps
+
+### Enabling/Disabling Sources
+
+Configure in `~/.config/hoards/config.toml`:
+
+```toml
+[sources]
+cargo = true
+apt = true
+pip = false    # Disable pip scanning
+npm = false    # Disable npm scanning
+brew = false
+flatpak = true
+manual = true
+```
+
+Or use the TUI config menu (`c` key) to toggle sources interactively.
+
+### Cross-Source Migration
+
+Tools may be available from multiple sources. Hoards can detect migration opportunities:
+
+```bash
+# Find tools available from better sources
+hoards ai migrate
+
+# Migrate from apt to cargo (newer versions)
+hoards ai migrate --from apt --to cargo
+
+# Preview without making changes
+hoards ai migrate --dry-run
+```
+
+### Source Priority
+
+When a tool is available from multiple sources, hoards prefers:
+1. **Cargo** - Latest versions, Rust ecosystem
+2. **Brew** - Well-maintained, macOS native
+3. **Pip/Npm** - Language-specific tools
+4. **Apt** - System stability
+5. **Flatpak** - Sandboxed apps
+
+You can override by specifying the source during installation:
+
+```bash
+hoards install ripgrep --source cargo
+```
+
+---
+
 ## AI Features
 
 AI helps with categorization, descriptions, and discovery.
+
+### Provider Setup
+
+Before using AI features, install and configure an AI CLI tool:
+
+**Claude (Anthropic):**
+```bash
+# Install claude CLI
+npm install -g @anthropic-ai/claude-cli
+# Or via pip
+pip install claude-cli
+
+# Configure API key
+export ANTHROPIC_API_KEY="your-key"
+```
+
+**Gemini (Google):**
+```bash
+# Install gemini CLI
+pip install google-generativeai
+
+# Configure API key
+export GOOGLE_API_KEY="your-key"
+```
+
+**Codex (OpenAI):**
+```bash
+# Install codex CLI
+npm install -g openai-codex
+
+# Configure API key
+export OPENAI_API_KEY="your-key"
+```
+
+Then configure hoards:
+```bash
+hoards ai config set claude  # or: gemini, codex, opencode
+hoards ai config test        # Verify connection
+```
 
 ### Configuration
 
@@ -684,6 +802,77 @@ hoards ai bundle-cheatsheet dev-tools --refresh
 ```
 
 Bundle cheatsheets show how tools work together rather than just listing individual commands.
+
+### Usage Analysis
+
+Analyze your tool usage patterns to find optimization opportunities:
+
+```bash
+# Full analysis with AI insights
+hoards ai analyze
+
+# Quick analysis without AI
+hoards ai analyze --no-ai
+
+# Only show tools used at least 10 times
+hoards ai analyze --min-uses 10
+
+# Output as JSON for scripting
+hoards ai analyze --json
+```
+
+**Analysis includes:**
+- Traditional vs modern tool usage (grep→ripgrep, find→fd, etc.)
+- High-value unused tools (popular but you don't use them)
+- Personalized recommendations based on your workflow
+
+### Migration Assistant
+
+Find opportunities to migrate tools to better sources:
+
+```bash
+# Find all migration opportunities
+hoards ai migrate
+
+# Migrate specific sources
+hoards ai migrate --from apt --to cargo
+
+# Preview migrations
+hoards ai migrate --dry-run
+
+# JSON output
+hoards ai migrate --json
+```
+
+**Benefits of migration:**
+- Newer versions (apt packages often lag)
+- Consistent updates (`cargo install` vs system updates)
+- Cross-platform compatibility
+
+---
+
+## Terminal UI
+
+Hoards includes a rich Terminal User Interface (TUI) for visual tool management.
+
+```bash
+# Launch the TUI
+hoards tui
+
+# Or simply (TUI is the default)
+hoards
+```
+
+**Key features:**
+- 5 tabs: Installed, Available, Updates, Bundles, Discover
+- Fuzzy search with `/`
+- Vim-style navigation (j/k/g/G)
+- Multi-select with Space
+- Command palette with `:`
+- 6 built-in themes (cycle with `t`)
+- Mouse support
+
+For the complete TUI guide, see [TUI_GUIDE.md](TUI_GUIDE.md).
 
 ---
 

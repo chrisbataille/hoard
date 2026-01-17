@@ -603,10 +603,8 @@ pub fn cmd_usage_init(
 ) -> Result<()> {
     use crate::config::UsageMode;
 
-    let mode = config.usage.mode.as_ref();
-
-    match mode {
-        Some(UsageMode::Scan) => {
+    match config.usage.mode {
+        UsageMode::Scan => {
             println!("{} Usage tracking is set to 'scan' mode.", ">".cyan());
             println!(
                 "  Run {} to update usage counts from shell history.",
@@ -618,7 +616,7 @@ pub fn cmd_usage_init(
                 "hoards usage config --mode hook".yellow()
             );
         }
-        Some(UsageMode::Hook) | None => {
+        UsageMode::Hook => {
             let shell = shell_override
                 .or_else(|| config.usage.shell.clone())
                 .unwrap_or_else(detect_shell);
@@ -643,25 +641,16 @@ pub fn cmd_usage_config(
             println!("{}", "Usage Tracking Configuration".bold());
             println!("{}", "-".repeat(40));
 
-            match &config.usage.mode {
-                Some(UsageMode::Scan) => {
+            match config.usage.mode {
+                UsageMode::Scan => {
                     println!("  Mode:  {} (manual)", "scan".cyan());
                     println!("  Info:  Run 'hoards usage scan' periodically");
                 }
-                Some(UsageMode::Hook) => {
+                UsageMode::Hook => {
                     let shell = config.usage.shell.as_deref().unwrap_or("unknown");
                     println!("  Mode:  {} (automatic)", "hook".cyan());
                     println!("  Shell: {}", shell.cyan());
                     println!("  Info:  Commands tracked in real-time via shell hook");
-                }
-                None => {
-                    println!("  Mode:  {} (not configured)", "none".yellow());
-                    println!();
-                    println!(
-                        "{} Run {} to set up usage tracking",
-                        ">".cyan(),
-                        "hoards usage config --mode <scan|hook>".yellow()
-                    );
                 }
             }
         }
@@ -692,7 +681,7 @@ pub fn cmd_usage_config(
                 }
             };
 
-            config.usage.mode = Some(mode);
+            config.usage.mode = mode;
             config.save()?;
             println!("{} Configuration saved.", "+".green());
         }
@@ -827,44 +816,33 @@ pub fn cmd_usage_reset(db: &Database, force: bool) -> Result<()> {
 }
 
 /// Ensure usage tracking is configured (interactive setup if not)
+/// With JSON config, mode defaults to Scan - this function offers the user
+/// a chance to switch to Hook mode during initial setup
 pub fn ensure_usage_configured(config: &mut crate::config::HoardConfig) -> Result<()> {
     use crate::config::UsageMode;
-    use dialoguer::Select;
+    use dialoguer::Confirm;
 
-    if config.usage.mode.is_some() {
-        return Ok(()); // Already configured
-    }
-
-    println!("{} Usage tracking is not configured.", ">".cyan());
+    // Mode always has a value now (defaults to Scan)
+    // Offer to switch to hook mode for real-time tracking
+    println!(
+        "{} Usage tracking mode: {} (manual history scanning)",
+        ">".cyan(),
+        "scan".cyan()
+    );
     println!();
-    println!("How would you like to track tool usage?");
-    println!();
 
-    let items = vec![
-        "History scan (manual) - Run 'hoards usage scan' periodically",
-        "Shell hook (automatic) - Track commands in real-time",
-    ];
-
-    let selection = Select::new()
-        .with_prompt("Select tracking mode")
-        .items(&items)
-        .default(0)
+    let use_hooks = Confirm::new()
+        .with_prompt("Would you like to enable real-time tracking with shell hooks instead?")
+        .default(false)
         .interact()?;
 
-    let mode = if selection == 0 {
-        println!();
-        println!("{} Selected: history scan mode", "+".green());
-        println!(
-            "  Run {} to scan your shell history.",
-            "hoards usage scan".yellow()
-        );
-        UsageMode::Scan
-    } else {
+    if use_hooks {
         let shell = detect_shell();
         config.usage.shell = Some(shell.clone());
+        config.usage.mode = UsageMode::Hook;
 
         println!();
-        println!("{} Selected: shell hook mode", "+".green());
+        println!("{} Switching to hook mode...", ">".cyan());
         println!("{} Detected shell: {}", ">".cyan(), shell.cyan());
 
         if shell == "bash" {
@@ -872,12 +850,16 @@ pub fn ensure_usage_configured(config: &mut crate::config::HoardConfig) -> Resul
         }
 
         print_hook_instructions(&shell);
-        UsageMode::Hook
-    };
-
-    config.usage.mode = Some(mode);
-    config.save()?;
-    println!("{} Configuration saved.", "+".green());
+        config.save()?;
+        println!("{} Configuration saved.", "+".green());
+    } else {
+        println!();
+        println!(
+            "{} Keeping scan mode. Run {} to update usage counts.",
+            ">".cyan(),
+            "hoards usage scan".yellow()
+        );
+    }
 
     Ok(())
 }

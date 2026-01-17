@@ -194,6 +194,16 @@ impl Database {
         Ok(rows > 0)
     }
 
+    /// Update favorite status for a tool
+    pub fn set_tool_favorite(&self, name: &str, favorite: bool) -> Result<bool> {
+        let rows = self.conn.execute(
+            "UPDATE tools SET is_favorite = ?1, updated_at = ?2 WHERE name = ?3",
+            params![favorite, Utc::now().to_rfc3339(), name],
+        )?;
+
+        Ok(rows > 0)
+    }
+
     /// Delete a tool by name
     pub fn delete_tool(&self, name: &str) -> Result<bool> {
         let rows = self
@@ -263,6 +273,15 @@ impl Database {
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(tools)
+    }
+
+    /// Get the most recent update timestamp (proxy for last sync)
+    pub fn get_last_sync_time(&self) -> Result<Option<DateTime<Utc>>> {
+        let result: Option<String> =
+            self.conn
+                .query_row("SELECT MAX(updated_at) FROM tools", [], |row| row.get(0))?;
+
+        Ok(result.map(parse_datetime))
     }
 
     // ==================== Interest Operations ====================

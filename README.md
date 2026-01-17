@@ -14,13 +14,33 @@ Hoards tracks your CLI tools across multiple package managers, provides usage an
 
 ## Features
 
-- **Multi-source tracking** - Track tools from cargo, apt, pip, npm, brew, snap, flatpak
+- **Terminal UI (TUI)** - Rich visual interface with fuzzy search, vim keybindings, and mouse support
+- **Multi-source tracking** - Track tools from cargo, apt, pip, npm, brew, flatpak
 - **Usage analytics** - Parse shell history (Fish, Bash, Zsh) to see which tools you actually use
 - **AI integration** - Auto-categorize tools and generate descriptions using Claude, Gemini, or Codex
 - **GitHub sync** - Fetch repository info, topics, and stars
 - **Bundles** - Group related tools for batch installation
 - **Config management** - Track dotfiles and tool configurations
-- **Health checks** - Diagnose and fix database inconsistencies
+- **6 built-in themes** - Catppuccin, Dracula, Nord, Tokyo Night, Gruvbox, plus custom themes
+
+## Terminal UI
+
+Launch the TUI for visual tool management:
+
+```bash
+hoards tui    # or just: hoards
+```
+
+**Highlights:**
+- **5 tabs**: Installed, Available, Updates, Bundles, Discover
+- **Fuzzy search**: Press `/` to filter tools instantly
+- **Vim navigation**: `j/k/g/G` and arrow keys
+- **Multi-select**: `Space` to select, `Ctrl+a` for all
+- **Command palette**: `:` for vim-style commands
+- **Theme cycling**: Press `t` to change themes
+- **Mouse support**: Click tabs, scroll lists, right-click to select
+
+See the [TUI Guide](docs/TUI_GUIDE.md) for complete documentation.
 
 ## Installation
 

@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/chrisbataille/hoards/main/schema/config.schema.json",
+  "title": "Hoards Configuration",
+  "description": "Configuration file for the hoards CLI tool manager",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema reference for validation"
+    },
+    "ai": {
+      "type": "object",
+      "description": "AI provider configuration",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "description": "AI provider to use for intelligent features",
+          "enum": ["none", "claude", "gemini", "codex", "opencode"],
+          "default": "none"
+        }
+      },
+      "default": {
+        "provider": "none"
+      }
+    },
+    "usage": {
+      "type": "object",
+      "description": "Usage tracking configuration",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "description": "How to track tool usage",
+          "enum": ["scan", "hook"],
+          "default": "scan"
+        },
+        "shell": {
+          "type": "string",
+          "description": "Shell for hook mode",
+          "enum": ["fish", "bash", "zsh"]
+        }
+      },
+      "default": {
+        "mode": "scan"
+      }
+    },
+    "tui": {
+      "type": "object",
+      "description": "Terminal UI configuration",
+      "properties": {
+        "theme": {
+          "type": "string",
+          "description": "Color theme for the TUI. Use 'custom' to load theme from custom-theme.json",
+          "enum": [
+            "catppuccin-mocha",
+            "catppuccin-latte",
+            "dracula",
+            "nord",
+            "tokyo-night",
+            "gruvbox",
+            "custom"
+          ],
+          "default": "catppuccin-mocha"
+        }
+      },
+      "default": {
+        "theme": "catppuccin-mocha"
+      }
+    },
+    "sources": {
+      "type": "object",
+      "description": "Package manager sources to enable",
+      "properties": {
+        "cargo": {
+          "type": "boolean",
+          "description": "Enable Rust cargo packages",
+          "default": true
+        },
+        "apt": {
+          "type": "boolean",
+          "description": "Enable apt packages (Debian/Ubuntu)",
+          "default": true
+        },
+        "pip": {
+          "type": "boolean",
+          "description": "Enable Python pip packages",
+          "default": false
+        },
+        "npm": {
+          "type": "boolean",
+          "description": "Enable Node.js npm packages",
+          "default": false
+        },
+        "brew": {
+          "type": "boolean",
+          "description": "Enable Homebrew packages",
+          "default": false
+        },
+        "flatpak": {
+          "type": "boolean",
+          "description": "Enable Flatpak packages",
+          "default": true
+        },
+        "manual": {
+          "type": "boolean",
+          "description": "Enable manually tracked tools",
+          "default": true
+        }
+      },
+      "default": {
+        "cargo": true,
+        "apt": true,
+        "pip": false,
+        "npm": false,
+        "brew": false,
+        "flatpak": true,
+        "manual": true
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,5 +1,7 @@
 //! Label database operations
 
+use std::collections::HashMap;
+
 use anyhow::Result;
 use rusqlite::params;
 
@@ -98,5 +100,28 @@ impl Database {
             [tool_name],
         )?;
         Ok(rows > 0)
+    }
+
+    /// Get all labels for all tools (batch operation for TUI)
+    /// Returns a map of tool_name -> Vec<label>
+    pub fn get_all_tool_labels(&self) -> Result<HashMap<String, Vec<String>>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT t.name, tl.label
+             FROM tool_labels tl
+             JOIN tools t ON tl.tool_id = t.id
+             ORDER BY t.name, tl.label",
+        )?;
+
+        let mut result: HashMap<String, Vec<String>> = HashMap::new();
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+
+        for row in rows {
+            let (tool_name, label) = row?;
+            result.entry(tool_name).or_default().push(label);
+        }
+
+        Ok(result)
     }
 }
