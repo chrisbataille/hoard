@@ -339,7 +339,7 @@ fn build_tool_extra_info(app: &App, tool: &crate::models::Tool) -> (String, Stri
         (info, String::new())
     } else {
         let usage = app.get_usage(&tool.name).map(|u| u.use_count).unwrap_or(0);
-        let daily = app.daily_usage.get(&tool.name);
+        let daily = app.cache.daily_usage.get(&tool.name);
         let spark_str = daily.map(|d| sparkline(d)).unwrap_or_default();
         let info = if usage > 0 {
             format!(" ({usage})")
@@ -401,6 +401,7 @@ fn build_tool_list_item(
 
     // GitHub stars
     let stars_span = app
+        .cache
         .github_cache
         .get(&tool.name)
         .filter(|gh| gh.stars > 0)
@@ -579,7 +580,7 @@ fn render_details(frame: &mut Frame, app: &mut App, db: &Database, theme: &Theme
         }
 
         // Labels (as colored pills)
-        if let Some(labels) = app.labels_cache.get(&tool.name)
+        if let Some(labels) = app.cache.labels_cache.get(&tool.name)
             && !labels.is_empty()
         {
             let mut spans = vec![Span::styled(
@@ -602,7 +603,7 @@ fn render_details(frame: &mut Frame, app: &mut App, db: &Database, theme: &Theme
         lines.push(Line::from(""));
 
         // Usage statistics
-        if let Some(usage) = app.usage_data.get(&tool.name) {
+        if let Some(usage) = app.cache.usage_data.get(&tool.name) {
             lines.push(Line::from(Span::styled(
                 "Usage:",
                 Style::default()
@@ -629,7 +630,7 @@ fn render_details(frame: &mut Frame, app: &mut App, db: &Database, theme: &Theme
         }
 
         // GitHub info (already fetched above)
-        if let Some(gh) = app.github_cache.get(&tool.name) {
+        if let Some(gh) = app.cache.github_cache.get(&tool.name) {
             lines.push(Line::from(Span::styled(
                 "GitHub:",
                 Style::default()
@@ -660,7 +661,7 @@ fn render_details(frame: &mut Frame, app: &mut App, db: &Database, theme: &Theme
         let (status_text, status_color, health_hint) = if !tool.is_installed {
             ("Not installed", theme.yellow, None)
         } else {
-            let usage = app.usage_data.get(&tool.name);
+            let usage = app.cache.usage_data.get(&tool.name);
             let use_count = usage.map(|u| u.use_count).unwrap_or(0);
             let last_used = usage.and_then(|u| u.last_used.as_deref());
 
@@ -770,7 +771,7 @@ fn render_bundle_list(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
                 ),
             ]);
 
-            let style = if i == app.bundle_selected {
+            let style = if i == app.bundles.selected {
                 Style::default().bg(theme.surface0)
             } else {
                 Style::default()
@@ -796,7 +797,7 @@ fn render_bundle_list(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         );
 
     let mut state = ListState::default();
-    state.select(Some(app.bundle_selected));
+    state.select(Some(app.bundles.selected));
 
     frame.render_stateful_widget(list, area, &mut state);
 
@@ -810,14 +811,14 @@ fn render_bundle_list(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
             .thumb_symbol("█");
 
         let mut scrollbar_state =
-            ScrollbarState::new(app.bundles.len()).position(app.bundle_selected);
+            ScrollbarState::new(app.bundles.len()).position(app.bundles.selected);
 
         frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
     }
 }
 
 fn render_bundle_details(frame: &mut Frame, app: &App, db: &Database, theme: &Theme, area: Rect) {
-    let content = if let Some(bundle) = app.bundles.get(app.bundle_selected) {
+    let content = if let Some(bundle) = app.bundles.get(app.bundles.selected) {
         let mut lines = vec![
             Line::from(Span::styled(
                 &bundle.name,
@@ -1239,7 +1240,7 @@ fn build_search_mode_footer(app: &App, theme: &Theme) -> Vec<Span<'static>> {
 fn build_command_mode_footer(app: &App, theme: &Theme) -> Vec<Span<'static>> {
     let mut spans = vec![
         Span::styled(" :", Style::default().fg(theme.mauve)),
-        Span::styled(app.command_input.clone(), Style::default().fg(theme.text)),
+        Span::styled(app.command.input.clone(), Style::default().fg(theme.text)),
         Span::styled("│", Style::default().fg(theme.blue)),
     ];
 
@@ -1264,7 +1265,7 @@ fn build_command_mode_footer(app: &App, theme: &Theme) -> Vec<Span<'static>> {
             " complete",
             Style::default().fg(theme.subtext0),
         ));
-    } else if app.command_input.is_empty() {
+    } else if app.command.input.is_empty() {
         spans.push(Span::styled("  Enter", Style::default().fg(theme.blue)));
         spans.push(Span::styled(
             " execute ",
@@ -1901,7 +1902,7 @@ fn render_details_popup(
         }
 
         // Labels (as colored pills)
-        if let Some(labels) = app.labels_cache.get(&tool.name)
+        if let Some(labels) = app.cache.labels_cache.get(&tool.name)
             && !labels.is_empty()
         {
             let mut spans = vec![Span::styled(
@@ -1924,7 +1925,7 @@ fn render_details_popup(
         lines.push(Line::from(""));
 
         // Usage
-        if let Some(usage) = app.usage_data.get(&tool.name) {
+        if let Some(usage) = app.cache.usage_data.get(&tool.name) {
             lines.push(Line::from(vec![
                 Span::styled("Usage: ", Style::default().fg(theme.subtext0)),
                 Span::styled(
@@ -1944,7 +1945,7 @@ fn render_details_popup(
         }
 
         // GitHub
-        if let Some(gh) = app.github_cache.get(&tool.name) {
+        if let Some(gh) = app.cache.github_cache.get(&tool.name) {
             lines.push(Line::from(vec![
                 Span::styled("★ Stars: ", Style::default().fg(theme.yellow)),
                 Span::styled(format_stars(gh.stars), Style::default().fg(theme.yellow)),

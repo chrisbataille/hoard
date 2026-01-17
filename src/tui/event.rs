@@ -298,7 +298,7 @@ fn handle_command_mode(app: &mut App, key: KeyEvent, db: &Database) {
         KeyCode::Up => app.command_history_prev(),
         KeyCode::Down => app.command_history_next(),
         KeyCode::Backspace => {
-            if app.command_input.is_empty() {
+            if app.command.input.is_empty() {
                 app.exit_command();
             } else {
                 app.command_pop();

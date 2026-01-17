@@ -743,6 +743,243 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("edit-theme", "show custom theme file path"),
 ];
 
+// ============================================================================
+// Extracted Components (reducing App god object)
+// ============================================================================
+
+/// Manages cached data for the TUI (usage, GitHub info, labels)
+#[derive(Debug, Default)]
+pub struct CacheManager {
+    /// Usage data per tool
+    pub usage_data: HashMap<String, ToolUsage>,
+    /// 7-day daily usage counts for sparklines
+    pub daily_usage: HashMap<String, Vec<i64>>,
+    /// GitHub info cache (stars, description, etc.)
+    pub github_cache: HashMap<String, GitHubInfo>,
+    /// Labels/tags per tool
+    pub labels_cache: HashMap<String, Vec<String>>,
+}
+
+impl CacheManager {
+    /// Create a new cache manager, loading data from database
+    pub fn new(db: &Database) -> Self {
+        let usage_data = db.get_all_usage().unwrap_or_default().into_iter().collect();
+        let daily_usage = db.get_all_daily_usage(7).unwrap_or_default();
+        let github_cache = db
+            .get_all_github_info()
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        let labels_cache = db.get_all_tool_labels().unwrap_or_default();
+
+        Self {
+            usage_data,
+            daily_usage,
+            github_cache,
+            labels_cache,
+        }
+    }
+
+    /// Get usage data for a tool
+    pub fn get_usage(&self, tool_name: &str) -> Option<&ToolUsage> {
+        self.usage_data.get(tool_name)
+    }
+
+    /// Get GitHub info for a tool, fetching from DB if not cached
+    pub fn get_github_info(&mut self, tool_name: &str, db: &Database) -> Option<&GitHubInfo> {
+        if !self.github_cache.contains_key(tool_name)
+            && let Ok(Some(info)) = db.get_github_info(tool_name)
+        {
+            self.github_cache.insert(tool_name.to_string(), info);
+        }
+        self.github_cache.get(tool_name)
+    }
+
+    /// Reload labels cache from database
+    pub fn reload_labels(&mut self, db: &Database) {
+        self.labels_cache = db.get_all_tool_labels().unwrap_or_default();
+    }
+}
+
+/// Manages bundle list state and navigation
+#[derive(Debug, Default)]
+pub struct BundleState {
+    /// All bundles
+    pub items: Vec<Bundle>,
+    /// Currently selected index
+    pub selected: usize,
+}
+
+impl BundleState {
+    /// Create from bundles list
+    pub fn new(bundles: Vec<Bundle>) -> Self {
+        Self {
+            items: bundles,
+            selected: 0,
+        }
+    }
+
+    /// Move selection down
+    pub fn next(&mut self) {
+        if !self.items.is_empty() {
+            self.selected = (self.selected + 1).min(self.items.len() - 1);
+        }
+    }
+
+    /// Move selection up
+    pub fn prev(&mut self) {
+        self.selected = self.selected.saturating_sub(1);
+    }
+
+    /// Jump to first item
+    pub fn first(&mut self) {
+        self.selected = 0;
+    }
+
+    /// Jump to last item
+    pub fn last(&mut self) {
+        if !self.items.is_empty() {
+            self.selected = self.items.len() - 1;
+        }
+    }
+
+    /// Get currently selected bundle
+    pub fn selected_bundle(&self) -> Option<&Bundle> {
+        self.items.get(self.selected)
+    }
+
+    /// Select by index (for mouse clicks)
+    pub fn select(&mut self, index: usize) {
+        if index < self.items.len() {
+            self.selected = index;
+        }
+    }
+
+    /// Reload bundles from database
+    pub fn reload(&mut self, db: &Database) -> Result<()> {
+        self.items = db.list_bundles()?;
+        self.selected = self.selected.min(self.items.len().saturating_sub(1));
+        Ok(())
+    }
+
+    /// Check if empty (delegate to items)
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    /// Get length (delegate to items)
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    /// Get bundle by index (delegate to items)
+    pub fn get(&self, index: usize) -> Option<&Bundle> {
+        self.items.get(index)
+    }
+
+    /// Iterate over bundles (delegate to items)
+    pub fn iter(&self) -> impl Iterator<Item = &Bundle> {
+        self.items.iter()
+    }
+}
+
+/// Manages command palette input and history
+#[derive(Debug, Default)]
+pub struct CommandPalette {
+    /// Current command input (after ':')
+    pub input: String,
+    /// Command history for ↑/↓ navigation
+    history: Vec<String>,
+    /// Current position in history (None = not navigating)
+    history_index: Option<usize>,
+    /// Temporary storage for current input when navigating history
+    history_temp: String,
+    /// Maximum history size
+    max_history: usize,
+}
+
+impl CommandPalette {
+    /// Create new command palette with default history size
+    pub fn new() -> Self {
+        Self {
+            max_history: 50,
+            ..Default::default()
+        }
+    }
+
+    /// Navigate to previous command in history
+    pub fn history_prev(&mut self) {
+        if self.history.is_empty() {
+            return;
+        }
+
+        match self.history_index {
+            None => {
+                // Start navigating - save current input
+                self.history_temp = self.input.clone();
+                self.history_index = Some(self.history.len() - 1);
+            }
+            Some(0) => {
+                // Already at oldest, do nothing
+            }
+            Some(idx) => {
+                self.history_index = Some(idx - 1);
+            }
+        }
+
+        if let Some(idx) = self.history_index {
+            self.input = self.history[idx].clone();
+        }
+    }
+
+    /// Navigate to next command in history
+    pub fn history_next(&mut self) {
+        match self.history_index {
+            None => {
+                // Not navigating, do nothing
+            }
+            Some(idx) if idx + 1 >= self.history.len() => {
+                // Back to current input
+                self.history_index = None;
+                self.input = self.history_temp.clone();
+            }
+            Some(idx) => {
+                self.history_index = Some(idx + 1);
+                self.input = self.history[idx + 1].clone();
+            }
+        }
+    }
+
+    /// Add command to history (if not duplicate of last)
+    pub fn add_to_history(&mut self, cmd: String) {
+        if cmd.is_empty() {
+            return;
+        }
+
+        // Avoid consecutive duplicates
+        if self.history.last() != Some(&cmd) {
+            self.history.push(cmd);
+
+            // Trim if over limit
+            if self.history.len() > self.max_history {
+                self.history.remove(0);
+            }
+        }
+    }
+
+    /// Clear history navigation state (after command execution)
+    pub fn clear_history_nav(&mut self) {
+        self.history_index = None;
+        self.history_temp.clear();
+    }
+
+    /// Clear input
+    pub fn clear(&mut self) {
+        self.input.clear();
+        self.clear_history_nav();
+    }
+}
+
 /// Main application state
 pub struct App {
     pub running: bool,
@@ -751,7 +988,6 @@ pub struct App {
     pub search_query: String,
     pub source_filter: Option<String>, // Filter by source (cargo, apt, etc.)
     pub favorites_only: bool,          // Filter to show only favorites
-    pub command_input: String,         // Command palette input (after ':')
 
     // Tool list state
     pub all_tools: Vec<Tool>, // All tools for current tab (unfiltered)
@@ -759,20 +995,15 @@ pub struct App {
     pub selected_index: usize,
     pub list_offset: usize,
 
-    // Cached data
-    pub usage_data: HashMap<String, ToolUsage>,
-    pub daily_usage: HashMap<String, Vec<i64>>, // 7-day usage for sparklines
-    pub github_cache: HashMap<String, GitHubInfo>,
-    pub labels_cache: HashMap<String, Vec<String>>, // tool_name -> labels
+    // Extracted components
+    pub cache: CacheManager,     // Usage, GitHub info, labels caches
+    pub bundles: BundleState,    // Bundle list and selection
+    pub command: CommandPalette, // Command palette input and history
 
     // Updates state
     pub available_updates: HashMap<String, Update>,
     pub updates_checked: bool,
     pub updates_loading: bool,
-
-    // Bundle list state (for Bundles tab)
-    pub bundles: Vec<Bundle>,
-    pub bundle_selected: usize,
 
     // UI state
     pub show_help: bool,
@@ -793,11 +1024,6 @@ pub struct App {
 
     // Undo/redo history
     pub history: ActionHistory,
-
-    // Command history (for ↑/↓ navigation)
-    pub command_history: Vec<String>,
-    pub command_history_index: Option<usize>,
-    pub command_history_temp: String, // Temporary storage for current input when navigating
 
     // Mouse interaction state
     pub last_list_area: Option<(u16, u16, u16, u16)>, // (x, y, width, height) of tool list
@@ -826,23 +1052,6 @@ impl App {
     pub fn new(db: &Database) -> Result<Self> {
         let all_tools = db.list_tools(true, None)?; // installed only
         let bundles = db.list_bundles()?;
-
-        // Load usage data
-        let usage_data: HashMap<String, ToolUsage> = db.get_all_usage()?.into_iter().collect();
-
-        // Load 7-day daily usage for sparklines
-        let daily_usage = db.get_all_daily_usage(7).unwrap_or_default();
-
-        // Preload GitHub info for stars display
-        let github_cache: HashMap<String, GitHubInfo> = db
-            .get_all_github_info()
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
-
-        // Preload labels for all tools
-        let labels_cache = db.get_all_tool_labels().unwrap_or_default();
-
         let tools = all_tools.clone();
 
         // Load config and check feature availability
@@ -869,20 +1078,16 @@ impl App {
             search_query: String::new(),
             source_filter: None,
             favorites_only: false,
-            command_input: String::new(),
             all_tools,
             tools,
             selected_index: 0,
             list_offset: 0,
-            usage_data,
-            daily_usage,
-            github_cache,
-            labels_cache,
+            cache: CacheManager::new(db),
+            bundles: BundleState::new(bundles),
+            command: CommandPalette::new(),
             available_updates: HashMap::new(),
             updates_checked: false,
             updates_loading: false,
-            bundles,
-            bundle_selected: 0,
             show_help: false,
             show_details_popup: false,
             sort_by: SortBy::default(),
@@ -893,9 +1098,6 @@ impl App {
             background_op: None,
             loading_progress: LoadingProgress::default(),
             history: ActionHistory::new(50), // Keep 50 actions max
-            command_history: Vec::new(),
-            command_history_index: None,
-            command_history_temp: String::new(),
             last_list_area: None,
             last_tab_area: None,
             last_config_popup_area: None,
@@ -993,10 +1195,8 @@ impl App {
         }
 
         // Also refresh bundles if on that tab
-        if self.tab == Tab::Bundles
-            && let Ok(bundles) = db.list_bundles()
-        {
-            self.bundles = bundles;
+        if self.tab == Tab::Bundles {
+            let _ = self.bundles.reload(db);
         }
     }
 
@@ -1072,7 +1272,7 @@ impl App {
             match self.sort_by {
                 SortBy::Name => filtered.sort_by(|a, b| a.0.name.cmp(&b.0.name)),
                 SortBy::Usage => {
-                    let usage = &self.usage_data;
+                    let usage = &self.cache.usage_data;
                     filtered.sort_by(|a, b| {
                         let a_usage = usage.get(&a.0.name).map(|u| u.use_count).unwrap_or(0);
                         let b_usage = usage.get(&b.0.name).map(|u| u.use_count).unwrap_or(0);
@@ -1216,31 +1416,27 @@ impl App {
 
     /// Move bundle selection down
     pub fn select_next_bundle(&mut self) {
-        if !self.bundles.is_empty() {
-            self.bundle_selected = (self.bundle_selected + 1).min(self.bundles.len() - 1);
-        }
+        self.bundles.next();
     }
 
     /// Move bundle selection up
     pub fn select_prev_bundle(&mut self) {
-        self.bundle_selected = self.bundle_selected.saturating_sub(1);
+        self.bundles.prev();
     }
 
     /// Move bundle selection to top
     pub fn select_first_bundle(&mut self) {
-        self.bundle_selected = 0;
+        self.bundles.first();
     }
 
     /// Move bundle selection to bottom
     pub fn select_last_bundle(&mut self) {
-        if !self.bundles.is_empty() {
-            self.bundle_selected = self.bundles.len() - 1;
-        }
+        self.bundles.last();
     }
 
     /// Get the currently selected bundle
     pub fn selected_bundle(&self) -> Option<&Bundle> {
-        self.bundles.get(self.bundle_selected)
+        self.bundles.selected_bundle()
     }
 
     /// Get the currently selected tool
@@ -1250,17 +1446,17 @@ impl App {
 
     /// Get usage for a tool
     pub fn get_usage(&self, tool_name: &str) -> Option<&ToolUsage> {
-        self.usage_data.get(tool_name)
+        self.cache.usage_data.get(tool_name)
     }
 
     /// Get GitHub info for a tool (cached, or fetch from db)
     pub fn get_github_info(&mut self, tool_name: &str, db: &Database) -> Option<&GitHubInfo> {
-        if !self.github_cache.contains_key(tool_name)
+        if !self.cache.github_cache.contains_key(tool_name)
             && let Ok(Some(info)) = db.get_github_info(tool_name)
         {
-            self.github_cache.insert(tool_name.to_string(), info);
+            self.cache.github_cache.insert(tool_name.to_string(), info);
         }
-        self.github_cache.get(tool_name)
+        self.cache.github_cache.get(tool_name)
     }
 
     /// Toggle help overlay
@@ -1421,29 +1617,28 @@ impl App {
     /// Enter command mode (vim-style ':')
     pub fn enter_command(&mut self) {
         self.input_mode = InputMode::Command;
-        self.command_input.clear();
-        self.reset_command_history_nav();
+        self.command.clear();
     }
 
     /// Exit command mode
     pub fn exit_command(&mut self) {
         self.input_mode = InputMode::Normal;
-        self.command_input.clear();
+        self.command.clear();
     }
 
     /// Add character to command input
     pub fn command_push(&mut self, c: char) {
-        self.command_input.push(c);
+        self.command.input.push(c);
     }
 
     /// Remove last character from command input
     pub fn command_pop(&mut self) {
-        self.command_input.pop();
+        self.command.input.pop();
     }
 
     /// Get command suggestions based on current input
     pub fn get_command_suggestions(&self) -> Vec<(&'static str, &'static str)> {
-        let input = self.command_input.trim().to_lowercase();
+        let input = self.command.input.trim().to_lowercase();
         if input.is_empty() {
             return Vec::new();
         }
@@ -1460,80 +1655,23 @@ impl App {
     pub fn autocomplete_command(&mut self) {
         let suggestions = self.get_command_suggestions();
         if let Some((cmd, _)) = suggestions.first() {
-            self.command_input = cmd.to_string();
+            self.command.input = cmd.to_string();
         }
     }
 
     /// Navigate to previous command in history (Up arrow)
     pub fn command_history_prev(&mut self) {
-        if self.command_history.is_empty() {
-            return;
-        }
-
-        match self.command_history_index {
-            None => {
-                // Save current input and go to most recent history
-                self.command_history_temp = self.command_input.clone();
-                self.command_history_index = Some(self.command_history.len() - 1);
-            }
-            Some(0) => {
-                // Already at oldest, stay there
-                return;
-            }
-            Some(idx) => {
-                self.command_history_index = Some(idx - 1);
-            }
-        }
-
-        if let Some(idx) = self.command_history_index {
-            self.command_input = self.command_history[idx].clone();
-        }
+        self.command.history_prev();
     }
 
     /// Navigate to next command in history (Down arrow)
     pub fn command_history_next(&mut self) {
-        match self.command_history_index {
-            None => {
-                // Not navigating history, do nothing
-            }
-            Some(idx) if idx + 1 >= self.command_history.len() => {
-                // Return to current input
-                self.command_history_index = None;
-                self.command_input = self.command_history_temp.clone();
-            }
-            Some(idx) => {
-                self.command_history_index = Some(idx + 1);
-                self.command_input = self.command_history[idx + 1].clone();
-            }
-        }
-    }
-
-    /// Add command to history (called after successful execution)
-    fn add_to_command_history(&mut self, cmd: &str) {
-        let cmd = cmd.trim().to_string();
-        if cmd.is_empty() {
-            return;
-        }
-
-        // Avoid duplicates at the end
-        if self.command_history.last() != Some(&cmd) {
-            self.command_history.push(cmd);
-            // Limit history size
-            if self.command_history.len() > 50 {
-                self.command_history.remove(0);
-            }
-        }
-    }
-
-    /// Reset history navigation state (called when entering command mode)
-    pub fn reset_command_history_nav(&mut self) {
-        self.command_history_index = None;
-        self.command_history_temp.clear();
+        self.command.history_next();
     }
 
     /// Execute the current command
     pub fn execute_command(&mut self, db: &Database) {
-        let cmd = self.command_input.trim().to_lowercase();
+        let cmd = self.command.input.trim().to_lowercase();
         let parts: Vec<&str> = cmd.split_whitespace().collect();
 
         if parts.is_empty() {
@@ -1542,7 +1680,8 @@ impl App {
         }
 
         // Add to command history
-        self.add_to_command_history(&cmd);
+        self.command.add_to_history(cmd.clone());
+        self.command.clear_history_nav();
 
         match parts[0] {
             // Quit commands
@@ -1876,9 +2015,7 @@ impl App {
         if self.tab == Tab::Bundles {
             // Handle bundle list clicks
             let target_index = row as usize; // Bundles don't scroll currently
-            if target_index < self.bundles.len() {
-                self.bundle_selected = target_index;
-            }
+            self.bundles.select(target_index);
         } else {
             // Handle tool list clicks
             let target_index = self.list_offset + row as usize;
@@ -2175,7 +2312,7 @@ impl App {
         if added > 0 {
             self.set_status(format!("Added {} tool(s) to Available", added), false);
             // Refresh the labels cache in case we want to add labels later
-            self.labels_cache = db.get_all_tool_labels().unwrap_or_default();
+            self.cache.labels_cache = db.get_all_tool_labels().unwrap_or_default();
         } else {
             self.set_status(format!("Failed to add {} tool(s)", count), true);
         }
@@ -2363,18 +2500,18 @@ mod tests {
         let mut app = App::new(&db).unwrap();
 
         assert_eq!(app.input_mode, InputMode::Normal);
-        assert!(app.command_input.is_empty());
+        assert!(app.command.input.is_empty());
 
         app.enter_command();
         assert_eq!(app.input_mode, InputMode::Command);
-        assert!(app.command_input.is_empty());
+        assert!(app.command.input.is_empty());
 
         app.command_push('q');
-        assert_eq!(app.command_input, "q");
+        assert_eq!(app.command.input, "q");
 
         app.exit_command();
         assert_eq!(app.input_mode, InputMode::Normal);
-        assert!(app.command_input.is_empty());
+        assert!(app.command.input.is_empty());
     }
 
     #[test]
@@ -2387,15 +2524,15 @@ mod tests {
         app.command_push('e');
         app.command_push('l');
         app.command_push('p');
-        assert_eq!(app.command_input, "help");
+        assert_eq!(app.command.input, "help");
 
         app.command_pop();
-        assert_eq!(app.command_input, "hel");
+        assert_eq!(app.command.input, "hel");
 
         app.command_pop();
         app.command_pop();
         app.command_pop();
-        assert!(app.command_input.is_empty());
+        assert!(app.command.input.is_empty());
     }
 
     #[test]
