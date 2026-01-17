@@ -5,8 +5,323 @@ use std::collections::{HashMap, HashSet};
 use anyhow::Result;
 
 use crate::Update;
+use crate::config::{AiProvider, HoardConfig, SourcesConfig, TuiTheme, UsageMode};
 use crate::db::{Database, GitHubInfo, ToolUsage};
-use crate::models::{Bundle, Tool};
+use crate::models::{Bundle, InstallSource, Tool};
+
+/// A search result from the Discover tab
+#[derive(Debug, Clone)]
+pub struct DiscoverResult {
+    pub name: String,
+    pub description: Option<String>,
+    pub source: DiscoverSource,
+    pub stars: Option<u64>,
+    pub url: Option<String>,
+}
+
+/// Source of a discover result
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiscoverSource {
+    GitHub,
+    CratesIo,
+    PyPI,
+    Npm,
+    Apt,
+    Homebrew,
+    AI,
+}
+
+impl DiscoverSource {
+    pub fn to_install_source(&self) -> InstallSource {
+        match self {
+            DiscoverSource::GitHub => InstallSource::Unknown,
+            DiscoverSource::CratesIo => InstallSource::Cargo,
+            DiscoverSource::PyPI => InstallSource::Pip,
+            DiscoverSource::Npm => InstallSource::Npm,
+            DiscoverSource::Apt => InstallSource::Apt,
+            DiscoverSource::Homebrew => InstallSource::Brew,
+            DiscoverSource::AI => InstallSource::Unknown,
+        }
+    }
+
+    pub fn icon(&self) -> &'static str {
+        match self {
+            DiscoverSource::GitHub => "\u{f09b}", //
+            DiscoverSource::CratesIo => "🦀",
+            DiscoverSource::PyPI => "🐍",
+            DiscoverSource::Npm => "\u{e71e}", //
+            DiscoverSource::Apt => "📦",
+            DiscoverSource::Homebrew => "🍺",
+            DiscoverSource::AI => "🤖",
+        }
+    }
+}
+
+/// Section of the config menu
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConfigSection {
+    #[default]
+    AiProvider,
+    Theme,
+    Sources,
+    UsageMode,
+    Buttons, // Save/Cancel
+}
+
+impl ConfigSection {
+    pub fn all() -> &'static [ConfigSection] {
+        &[
+            ConfigSection::AiProvider,
+            ConfigSection::Theme,
+            ConfigSection::Sources,
+            ConfigSection::UsageMode,
+            ConfigSection::Buttons,
+        ]
+    }
+
+    pub fn next(&self) -> ConfigSection {
+        match self {
+            ConfigSection::AiProvider => ConfigSection::Theme,
+            ConfigSection::Theme => ConfigSection::Sources,
+            ConfigSection::Sources => ConfigSection::UsageMode,
+            ConfigSection::UsageMode => ConfigSection::Buttons,
+            ConfigSection::Buttons => ConfigSection::AiProvider,
+        }
+    }
+
+    pub fn prev(&self) -> ConfigSection {
+        match self {
+            ConfigSection::AiProvider => ConfigSection::Buttons,
+            ConfigSection::Theme => ConfigSection::AiProvider,
+            ConfigSection::Sources => ConfigSection::Theme,
+            ConfigSection::UsageMode => ConfigSection::Sources,
+            ConfigSection::Buttons => ConfigSection::UsageMode,
+        }
+    }
+
+    /// Get the starting line number for this section in the config menu.
+    /// Used for click detection and auto-scroll.
+    ///
+    /// Layout (without custom theme description):
+    /// - Lines 0-5: AI Provider (header + 5 options)
+    /// - Line 6: empty
+    /// - Lines 7-14: Theme (header + 7 options)
+    /// - Line 15: empty
+    /// - Lines 16-23: Sources (header + 7 options)
+    /// - Line 24: empty
+    /// - Lines 25-27: Usage (header + 2 options)
+    /// - Line 28: empty
+    /// - Line 29: Buttons
+    pub fn start_line(&self, custom_theme_selected: bool) -> usize {
+        let theme_extra = if custom_theme_selected { 1 } else { 0 };
+        match self {
+            Self::AiProvider => 0,
+            Self::Theme => 7,
+            Self::Sources => 16 + theme_extra,
+            Self::UsageMode => 25 + theme_extra,
+            Self::Buttons => 29 + theme_extra,
+        }
+    }
+
+    /// Get the line range for items in this section (excluding header).
+    /// Returns (first_item_line, last_item_line) inclusive.
+    pub fn item_lines(&self, custom_theme_selected: bool) -> (usize, usize) {
+        let theme_extra = if custom_theme_selected { 1 } else { 0 };
+        match self {
+            Self::AiProvider => (1, 5),                              // 5 AI providers
+            Self::Theme => (8, 14),                                  // 7 themes (indices 0-6)
+            Self::Sources => (17 + theme_extra, 23 + theme_extra),   // 7 sources
+            Self::UsageMode => (26 + theme_extra, 27 + theme_extra), // 2 modes
+            Self::Buttons => (29 + theme_extra, 29 + theme_extra),   // 1 line
+        }
+    }
+
+    /// Number of selectable items in this section
+    pub fn item_count(&self) -> usize {
+        match self {
+            Self::AiProvider => 5, // None, Claude, Gemini, Codex, Opencode
+            Self::Theme => 7,      // 6 built-in + Custom
+            Self::Sources => 7,    // cargo, apt, pip, npm, brew, flatpak, manual
+            Self::UsageMode => 2,  // Scan, Hook
+            Self::Buttons => 2,    // Save, Cancel
+        }
+    }
+}
+
+/// Config menu layout constants
+pub mod config_menu_layout {
+    /// Base number of lines in config menu (without custom theme description)
+    pub const TOTAL_LINES_BASE: usize = 30;
+    /// Extra line when custom theme is selected (for file path hint)
+    pub const CUSTOM_THEME_EXTRA_LINES: usize = 1;
+    /// Index of custom theme
+    pub const CUSTOM_THEME_INDEX: usize = 6;
+
+    /// Calculate total lines based on whether custom theme is selected
+    pub fn total_lines(custom_theme_selected: bool) -> usize {
+        if custom_theme_selected {
+            TOTAL_LINES_BASE + CUSTOM_THEME_EXTRA_LINES
+        } else {
+            TOTAL_LINES_BASE
+        }
+    }
+}
+
+/// State for the config menu
+#[derive(Debug, Clone)]
+pub struct ConfigMenuState {
+    /// Currently focused section
+    pub section: ConfigSection,
+    /// Selected index within current section (for radio buttons)
+    pub ai_selected: usize,
+    pub theme_selected: usize,
+    pub usage_selected: usize,
+    /// Source toggles (separate state for checkboxes)
+    pub sources: SourcesConfig,
+    /// Which source is focused (0-6)
+    pub source_focused: usize,
+    /// Button focus (0=Save, 1=Cancel)
+    pub button_focused: usize,
+    /// Scroll offset for the config menu content
+    pub scroll_offset: usize,
+}
+
+impl Default for ConfigMenuState {
+    fn default() -> Self {
+        Self {
+            section: ConfigSection::AiProvider,
+            ai_selected: 0, // None
+            theme_selected: 0,
+            usage_selected: 0, // Scan
+            sources: SourcesConfig::default(),
+            source_focused: 0,
+            button_focused: 0, // Save
+            scroll_offset: 0,
+        }
+    }
+}
+
+impl ConfigMenuState {
+    /// Initialize from existing config
+    pub fn from_config(config: &HoardConfig) -> Self {
+        Self {
+            section: ConfigSection::AiProvider,
+            ai_selected: AiProvider::all()
+                .iter()
+                .position(|p| *p == config.ai.provider)
+                .unwrap_or(0),
+            theme_selected: config.tui.theme.index(),
+            usage_selected: match config.usage.mode {
+                UsageMode::Scan => 0,
+                UsageMode::Hook => 1,
+            },
+            sources: config.sources.clone(),
+            source_focused: 0,
+            button_focused: 0,
+            scroll_offset: 0,
+        }
+    }
+
+    /// Build config from current state
+    pub fn to_config(&self) -> HoardConfig {
+        let mut config = HoardConfig::default();
+        config.ai.provider = AiProvider::all()[self.ai_selected];
+        config.tui.theme = TuiTheme::from_index(self.theme_selected);
+        config.usage.mode = if self.usage_selected == 0 {
+            UsageMode::Scan
+        } else {
+            UsageMode::Hook
+        };
+        config.sources = self.sources.clone();
+        config
+    }
+
+    /// Move to next item in current section
+    pub fn next_item(&mut self) {
+        let count = self.section.item_count();
+        match self.section {
+            ConfigSection::AiProvider => {
+                self.ai_selected = (self.ai_selected + 1) % count;
+            }
+            ConfigSection::Theme => {
+                self.theme_selected = (self.theme_selected + 1) % count;
+            }
+            ConfigSection::Sources => {
+                self.source_focused = (self.source_focused + 1) % count;
+            }
+            ConfigSection::UsageMode => {
+                self.usage_selected = (self.usage_selected + 1) % count;
+            }
+            ConfigSection::Buttons => {
+                self.button_focused = (self.button_focused + 1) % count;
+            }
+        }
+    }
+
+    /// Move to prev item in current section
+    pub fn prev_item(&mut self) {
+        let count = self.section.item_count();
+        match self.section {
+            ConfigSection::AiProvider => {
+                self.ai_selected = if self.ai_selected == 0 {
+                    count - 1
+                } else {
+                    self.ai_selected - 1
+                };
+            }
+            ConfigSection::Theme => {
+                self.theme_selected = if self.theme_selected == 0 {
+                    count - 1
+                } else {
+                    self.theme_selected - 1
+                };
+            }
+            ConfigSection::Sources => {
+                self.source_focused = if self.source_focused == 0 {
+                    count - 1
+                } else {
+                    self.source_focused - 1
+                };
+            }
+            ConfigSection::UsageMode => {
+                self.usage_selected = if self.usage_selected == 0 {
+                    count - 1
+                } else {
+                    self.usage_selected - 1
+                };
+            }
+            ConfigSection::Buttons => {
+                self.button_focused = if self.button_focused == 0 {
+                    count - 1
+                } else {
+                    self.button_focused - 1
+                };
+            }
+        }
+    }
+
+    /// Toggle the current source checkbox (only for Sources section)
+    pub fn toggle_current_source(&mut self) {
+        if self.section == ConfigSection::Sources {
+            let sources = SourcesConfig::all_sources();
+            if self.source_focused < sources.len() {
+                self.sources.toggle(sources[self.source_focused]);
+            }
+        }
+    }
+
+    /// Scroll up by one line
+    pub fn scroll_up(&mut self) {
+        self.scroll_offset = self.scroll_offset.saturating_sub(1);
+    }
+
+    /// Scroll down by one line (with max limit)
+    pub fn scroll_down(&mut self, max_scroll: usize) {
+        if self.scroll_offset < max_scroll {
+            self.scroll_offset += 1;
+        }
+    }
+}
 
 /// Fuzzy match a query against a target string (fzf-style)
 /// Returns Some(score) if matches, None if no match
@@ -73,6 +388,65 @@ fn fuzzy_match(query: &str, target: &str) -> Option<i32> {
     }
 }
 
+/// Fuzzy match returning matched character positions for highlighting
+/// Returns (score, positions) if matches, None if no match
+pub fn fuzzy_match_positions(query: &str, target: &str) -> Option<(i32, Vec<usize>)> {
+    let query_lower = query.to_lowercase();
+    let target_lower = target.to_lowercase();
+
+    if query_lower.is_empty() {
+        return Some((0, vec![]));
+    }
+
+    let query_chars: Vec<char> = query_lower.chars().collect();
+    let target_chars: Vec<char> = target_lower.chars().collect();
+
+    let mut query_idx = 0;
+    let mut score = 0i32;
+    let mut prev_match_idx: Option<usize> = None;
+    let mut consecutive_bonus = 0i32;
+    let mut positions = Vec::new();
+
+    for (target_idx, &tc) in target_chars.iter().enumerate() {
+        if query_idx < query_chars.len() && tc == query_chars[query_idx] {
+            positions.push(target_idx);
+            score += 1;
+
+            if let Some(prev) = prev_match_idx {
+                if target_idx == prev + 1 {
+                    consecutive_bonus += 2;
+                    score += consecutive_bonus;
+                } else {
+                    consecutive_bonus = 0;
+                }
+            }
+
+            if target_idx == 0
+                || target_chars
+                    .get(target_idx.wrapping_sub(1))
+                    .map(|c| !c.is_alphanumeric())
+                    .unwrap_or(true)
+            {
+                score += 3;
+            }
+
+            prev_match_idx = Some(target_idx);
+            query_idx += 1;
+        }
+    }
+
+    if query_idx == query_chars.len() {
+        if query_lower == target_lower {
+            score += 100;
+        } else if target_lower.starts_with(&query_lower) {
+            score += 50;
+        }
+        Some((score, positions))
+    } else {
+        None
+    }
+}
+
 /// Available tabs in the TUI
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Tab {
@@ -81,11 +455,18 @@ pub enum Tab {
     Available,
     Updates,
     Bundles,
+    Discover,
 }
 
 impl Tab {
     pub fn all() -> &'static [Tab] {
-        &[Tab::Installed, Tab::Available, Tab::Updates, Tab::Bundles]
+        &[
+            Tab::Installed,
+            Tab::Available,
+            Tab::Updates,
+            Tab::Bundles,
+            Tab::Discover,
+        ]
     }
 
     pub fn title(&self) -> &'static str {
@@ -94,6 +475,7 @@ impl Tab {
             Tab::Available => "Available",
             Tab::Updates => "Updates",
             Tab::Bundles => "Bundles",
+            Tab::Discover => "Discover",
         }
     }
 
@@ -103,6 +485,7 @@ impl Tab {
             Tab::Available => 1,
             Tab::Updates => 2,
             Tab::Bundles => 3,
+            Tab::Discover => 4,
         }
     }
 
@@ -112,6 +495,7 @@ impl Tab {
             1 => Some(Tab::Available),
             2 => Some(Tab::Updates),
             3 => Some(Tab::Bundles),
+            4 => Some(Tab::Discover),
             _ => None,
         }
     }
@@ -123,7 +507,8 @@ pub enum InputMode {
     #[default]
     Normal,
     Search,
-    Command, // Vim-style command palette with ':'
+    Command,      // Vim-style command palette with ':'
+    JumpToLetter, // Waiting for letter input to jump to
 }
 
 /// Background operation that needs loading indicator
@@ -302,13 +687,71 @@ impl SortBy {
     }
 }
 
+/// Available commands for the command palette with descriptions
+pub const COMMANDS: &[(&str, &str)] = &[
+    ("q", "quit - exit the application"),
+    ("quit", "quit - exit the application"),
+    ("exit", "exit the application"),
+    ("h", "help - show help"),
+    ("help", "show help dialog"),
+    ("r", "refresh - reload tools"),
+    ("refresh", "reload tools from database"),
+    ("t", "theme [name] - cycle or set theme"),
+    ("theme", "theme [name] - cycle or set theme"),
+    ("s", "sort [field] - cycle or set sort"),
+    (
+        "sort",
+        "sort [field] - cycle or set sort (name/usage/recent)",
+    ),
+    (
+        "filter",
+        "filter [source] - filter by source (cargo/apt/pip/npm)",
+    ),
+    ("source", "source [name] - filter by source"),
+    ("src", "src [name] - filter by source"),
+    ("fav", "fav - toggle favorites filter"),
+    ("favorites", "favorites - toggle favorites filter"),
+    ("starred", "starred - toggle favorites filter"),
+    ("1", "go to Installed tab"),
+    ("installed", "go to Installed tab"),
+    ("2", "go to Available tab"),
+    ("available", "go to Available tab"),
+    ("3", "go to Updates tab"),
+    ("updates", "go to Updates tab"),
+    ("4", "go to Bundles tab"),
+    ("bundles", "go to Bundles tab"),
+    ("5", "go to Discover tab"),
+    ("discover", "go to Discover tab"),
+    ("i", "install selected item"),
+    ("install", "install selected tool/bundle"),
+    ("d", "delete/uninstall selected"),
+    ("delete", "delete selected tool"),
+    ("uninstall", "uninstall selected tool"),
+    ("u", "update selected"),
+    ("update", "update selected tool"),
+    ("upgrade", "upgrade selected tool"),
+    ("undo", "undo last action"),
+    ("z", "undo last action"),
+    ("redo", "redo undone action"),
+    ("y", "redo undone action"),
+    ("c", "config - open configuration menu"),
+    ("config", "open configuration menu"),
+    ("settings", "open configuration menu"),
+    ("cfg", "open configuration menu"),
+    ("create-theme", "create custom theme file"),
+    ("new-theme", "create custom theme file"),
+    ("edit-theme", "show custom theme file path"),
+];
+
 /// Main application state
 pub struct App {
     pub running: bool,
     pub tab: Tab,
     pub input_mode: InputMode,
     pub search_query: String,
-    pub command_input: String, // Command palette input (after ':')
+    pub source_filter: Option<String>, // Filter by source (cargo, apt, etc.)
+    pub favorites_only: bool,          // Filter to show only favorites
+    pub command_input: String,         // Command palette input (after ':')
 
     // Tool list state
     pub all_tools: Vec<Tool>, // All tools for current tab (unfiltered)
@@ -320,6 +763,7 @@ pub struct App {
     pub usage_data: HashMap<String, ToolUsage>,
     pub daily_usage: HashMap<String, Vec<i64>>, // 7-day usage for sparklines
     pub github_cache: HashMap<String, GitHubInfo>,
+    pub labels_cache: HashMap<String, Vec<String>>, // tool_name -> labels
 
     // Updates state
     pub available_updates: HashMap<String, Update>,
@@ -350,13 +794,32 @@ pub struct App {
     // Undo/redo history
     pub history: ActionHistory,
 
+    // Command history (for ↑/↓ navigation)
+    pub command_history: Vec<String>,
+    pub command_history_index: Option<usize>,
+    pub command_history_temp: String, // Temporary storage for current input when navigating
+
     // Mouse interaction state
     pub last_list_area: Option<(u16, u16, u16, u16)>, // (x, y, width, height) of tool list
     pub last_tab_area: Option<(u16, u16, u16, u16)>,  // (x, y, width, height) of tabs
+    pub last_config_popup_area: Option<(u16, u16, u16, u16)>, // (x, y, width, height) of config popup
 
     // Feature availability status (for footer display)
     pub ai_available: bool, // AI provider is configured
     pub gh_available: bool, // GitHub CLI is installed
+
+    // Last sync timestamp
+    pub last_sync: Option<chrono::DateTime<chrono::Utc>>,
+
+    // Discover tab state
+    pub discover_query: String,
+    pub discover_results: Vec<DiscoverResult>,
+    pub discover_selected: usize,
+    pub discover_loading: bool,
+
+    // Config menu state
+    pub show_config_menu: bool,
+    pub config_menu: ConfigMenuState,
 }
 
 impl App {
@@ -377,19 +840,35 @@ impl App {
             .into_iter()
             .collect();
 
+        // Preload labels for all tools
+        let labels_cache = db.get_all_tool_labels().unwrap_or_default();
+
         let tools = all_tools.clone();
 
-        // Check feature availability
-        let ai_available = crate::config::HoardConfig::load()
-            .map(|c| c.ai.provider != crate::config::AiProvider::None)
-            .unwrap_or(false);
+        // Load config and check feature availability
+        let config_exists = HoardConfig::exists();
+        let config = HoardConfig::load().unwrap_or_default();
+        let ai_available = config.ai.provider != AiProvider::None;
         let gh_available = which::which("gh").is_ok();
+
+        // Get theme from config
+        let theme_variant = super::theme::ThemeVariant::from_config_theme(config.tui.theme);
+
+        // Auto-show config menu if no config file exists
+        let show_config_menu = !config_exists;
+        let config_menu = if show_config_menu {
+            ConfigMenuState::from_config(&config)
+        } else {
+            ConfigMenuState::default()
+        };
 
         Ok(Self {
             running: true,
             tab: Tab::Installed,
             input_mode: InputMode::Normal,
             search_query: String::new(),
+            source_filter: None,
+            favorites_only: false,
             command_input: String::new(),
             all_tools,
             tools,
@@ -398,6 +877,7 @@ impl App {
             usage_data,
             daily_usage,
             github_cache,
+            labels_cache,
             available_updates: HashMap::new(),
             updates_checked: false,
             updates_loading: false,
@@ -406,17 +886,28 @@ impl App {
             show_help: false,
             show_details_popup: false,
             sort_by: SortBy::default(),
-            theme_variant: super::theme::ThemeVariant::default(),
+            theme_variant,
             selected_tools: HashSet::new(),
             pending_action: None,
             status_message: None,
             background_op: None,
             loading_progress: LoadingProgress::default(),
             history: ActionHistory::new(50), // Keep 50 actions max
+            command_history: Vec::new(),
+            command_history_index: None,
+            command_history_temp: String::new(),
             last_list_area: None,
             last_tab_area: None,
+            last_config_popup_area: None,
             ai_available,
             gh_available,
+            last_sync: db.get_last_sync_time().ok().flatten(),
+            discover_query: String::new(),
+            discover_results: Vec::new(),
+            discover_selected: 0,
+            discover_loading: false,
+            show_config_menu,
+            config_menu,
         })
     }
 
@@ -489,6 +980,7 @@ impl App {
                 }
             }
             Tab::Bundles => db.list_tools(true, None),
+            Tab::Discover => Ok(Vec::new()), // Discover has its own search results
         };
 
         if let Ok(mut tools) = result {
@@ -515,13 +1007,35 @@ impl App {
 
     /// Apply current search filter and sort to tools
     pub fn apply_filter_and_sort(&mut self) {
-        // Start with all tools
+        // Start with all tools, optionally filtered by source and favorites
+        let source_filtered: Vec<&Tool> = self
+            .all_tools
+            .iter()
+            .filter(|t| {
+                // Filter by source if set
+                if let Some(ref source) = self.source_filter
+                    && format!("{:?}", t.source).to_lowercase() != *source
+                {
+                    return false;
+                }
+                // Filter by favorites if enabled
+                if self.favorites_only && !t.is_favorite {
+                    return false;
+                }
+                true
+            })
+            .collect();
+
+        // Apply fuzzy search filter
         let mut filtered: Vec<(Tool, i32)> = if self.search_query.is_empty() {
-            self.all_tools.iter().map(|t| (t.clone(), 0)).collect()
+            source_filtered
+                .into_iter()
+                .map(|t| (t.clone(), 0))
+                .collect()
         } else {
             // Fuzzy match against name, description, and category
-            self.all_tools
-                .iter()
+            source_filtered
+                .into_iter()
                 .filter_map(|t| {
                     // Get best score across all fields
                     let name_score = fuzzy_match(&self.search_query, &t.name);
@@ -597,6 +1111,95 @@ impl App {
         self.selected_index = self.selected_index.saturating_sub(1);
     }
 
+    /// Move to next match with wrapping (vim n)
+    pub fn search_next(&mut self) {
+        if self.tools.is_empty() {
+            return;
+        }
+        // Move to next item, wrap to start if at end
+        if self.selected_index + 1 >= self.tools.len() {
+            self.selected_index = 0;
+            self.set_status("Search wrapped to top".to_string(), false);
+        } else {
+            self.selected_index += 1;
+        }
+    }
+
+    /// Move to previous match with wrapping (vim N)
+    pub fn search_prev(&mut self) {
+        if self.tools.is_empty() {
+            return;
+        }
+        // Move to previous item, wrap to end if at start
+        if self.selected_index == 0 {
+            self.selected_index = self.tools.len() - 1;
+            self.set_status("Search wrapped to bottom".to_string(), false);
+        } else {
+            self.selected_index -= 1;
+        }
+    }
+
+    /// Enter jump-to-letter mode (vim f)
+    pub fn enter_jump_mode(&mut self) {
+        self.input_mode = InputMode::JumpToLetter;
+    }
+
+    /// Exit jump-to-letter mode
+    pub fn exit_jump_mode(&mut self) {
+        self.input_mode = InputMode::Normal;
+    }
+
+    /// Jump to first tool starting with the given letter
+    pub fn jump_to_letter(&mut self, letter: char) {
+        let letter = letter.to_ascii_lowercase();
+        for (i, tool) in self.tools.iter().enumerate() {
+            if tool.name.to_lowercase().starts_with(letter) {
+                self.selected_index = i;
+                self.set_status(format!("Jumped to '{}'", letter), false);
+                break;
+            }
+        }
+        self.exit_jump_mode();
+    }
+
+    /// Toggle favorite status for the selected tool
+    pub fn toggle_favorite(&mut self, db: &Database) {
+        if let Some(tool) = self.selected_tool() {
+            let name = tool.name.clone();
+            let new_status = !tool.is_favorite;
+
+            match db.set_tool_favorite(&name, new_status) {
+                Ok(true) => {
+                    // Update local state
+                    for t in &mut self.all_tools {
+                        if t.name == name {
+                            t.is_favorite = new_status;
+                            break;
+                        }
+                    }
+                    for t in &mut self.tools {
+                        if t.name == name {
+                            t.is_favorite = new_status;
+                            break;
+                        }
+                    }
+                    let status = if new_status {
+                        "★ Added to favorites"
+                    } else {
+                        "Removed from favorites"
+                    };
+                    self.set_status(format!("{}: {}", name, status), false);
+                }
+                Ok(false) => {
+                    self.set_status(format!("Tool not found: {}", name), true);
+                }
+                Err(e) => {
+                    self.set_status(format!("Failed to update favorite: {}", e), true);
+                }
+            }
+        }
+    }
+
     /// Move selection to top
     pub fn select_first(&mut self) {
         self.selected_index = 0;
@@ -665,6 +1268,121 @@ impl App {
         self.show_help = !self.show_help;
     }
 
+    /// Open config menu
+    pub fn open_config_menu(&mut self) {
+        // Load current config and initialize menu state
+        if let Ok(config) = HoardConfig::load() {
+            self.config_menu = ConfigMenuState::from_config(&config);
+        } else {
+            self.config_menu = ConfigMenuState::default();
+        }
+        self.show_config_menu = true;
+    }
+
+    /// Close config menu without saving
+    pub fn close_config_menu(&mut self) {
+        self.show_config_menu = false;
+    }
+
+    /// Save config from menu and close
+    pub fn save_config_menu(&mut self) {
+        let config = self.config_menu.to_config();
+
+        // Apply theme immediately
+        self.theme_variant = super::theme::ThemeVariant::from_config_theme(config.tui.theme);
+
+        // Update AI availability
+        self.ai_available = config.ai.provider != AiProvider::None;
+
+        // Save to file
+        if let Err(e) = config.save() {
+            self.set_status(format!("Failed to save config: {}", e), true);
+        } else {
+            self.set_status("Configuration saved".to_string(), false);
+        }
+
+        self.show_config_menu = false;
+    }
+
+    /// Navigate config menu sections (with auto-scroll)
+    pub fn config_menu_next_section(&mut self) {
+        self.config_menu.section = self.config_menu.section.next();
+        self.scroll_to_config_section();
+    }
+
+    pub fn config_menu_prev_section(&mut self) {
+        self.config_menu.section = self.config_menu.section.prev();
+        self.scroll_to_config_section();
+    }
+
+    /// Scroll config menu to make current section visible
+    fn scroll_to_config_section(&mut self) {
+        use config_menu_layout::CUSTOM_THEME_INDEX;
+        let custom_selected = self.config_menu.theme_selected == CUSTOM_THEME_INDEX;
+        let section_line = self.config_menu.section.start_line(custom_selected);
+        // Cap scroll to keep buttons visible (don't scroll past ~25 lines)
+        self.config_menu.scroll_offset = section_line.min(25);
+    }
+
+    /// Navigate items within config menu section
+    pub fn config_menu_next_item(&mut self) {
+        self.config_menu.next_item();
+    }
+
+    pub fn config_menu_prev_item(&mut self) {
+        self.config_menu.prev_item();
+    }
+
+    /// Toggle source in config menu
+    pub fn config_menu_toggle_source(&mut self) {
+        self.config_menu.toggle_current_source();
+    }
+
+    /// Scroll config menu up
+    pub fn config_menu_scroll_up(&mut self) {
+        self.config_menu.scroll_up();
+    }
+
+    /// Scroll config menu down (pass total_lines from UI)
+    pub fn config_menu_scroll_down(&mut self, total_lines: usize, visible_lines: usize) {
+        let max_scroll = total_lines.saturating_sub(visible_lines);
+        self.config_menu.scroll_down(max_scroll);
+    }
+
+    /// Get config menu scroll offset
+    pub fn config_menu_scroll_offset(&self) -> usize {
+        self.config_menu.scroll_offset
+    }
+
+    /// Handle Enter key in config menu
+    pub fn config_menu_select(&mut self) {
+        match self.config_menu.section {
+            ConfigSection::Buttons => {
+                if self.config_menu.button_focused == 0 {
+                    // Save
+                    self.save_config_menu();
+                } else {
+                    // Cancel
+                    self.close_config_menu();
+                }
+            }
+            ConfigSection::Sources => {
+                // Toggle the current source
+                self.config_menu.toggle_current_source();
+            }
+            _ => {
+                // For radio button sections, the current selection is already the value
+                // Move to next section
+                self.config_menu.section = self.config_menu.section.next();
+            }
+        }
+    }
+
+    /// Check if config menu should auto-launch (no config file exists)
+    pub fn should_show_config_on_start() -> bool {
+        !HoardConfig::exists()
+    }
+
     /// Enter search mode
     pub fn enter_search(&mut self) {
         self.record_filter(); // Record current filter for undo
@@ -704,6 +1422,7 @@ impl App {
     pub fn enter_command(&mut self) {
         self.input_mode = InputMode::Command;
         self.command_input.clear();
+        self.reset_command_history_nav();
     }
 
     /// Exit command mode
@@ -722,6 +1441,96 @@ impl App {
         self.command_input.pop();
     }
 
+    /// Get command suggestions based on current input
+    pub fn get_command_suggestions(&self) -> Vec<(&'static str, &'static str)> {
+        let input = self.command_input.trim().to_lowercase();
+        if input.is_empty() {
+            return Vec::new();
+        }
+
+        COMMANDS
+            .iter()
+            .filter(|(cmd, _)| cmd.starts_with(&input))
+            .take(5) // Limit to 5 suggestions
+            .copied()
+            .collect()
+    }
+
+    /// Autocomplete the current command with the first suggestion
+    pub fn autocomplete_command(&mut self) {
+        let suggestions = self.get_command_suggestions();
+        if let Some((cmd, _)) = suggestions.first() {
+            self.command_input = cmd.to_string();
+        }
+    }
+
+    /// Navigate to previous command in history (Up arrow)
+    pub fn command_history_prev(&mut self) {
+        if self.command_history.is_empty() {
+            return;
+        }
+
+        match self.command_history_index {
+            None => {
+                // Save current input and go to most recent history
+                self.command_history_temp = self.command_input.clone();
+                self.command_history_index = Some(self.command_history.len() - 1);
+            }
+            Some(0) => {
+                // Already at oldest, stay there
+                return;
+            }
+            Some(idx) => {
+                self.command_history_index = Some(idx - 1);
+            }
+        }
+
+        if let Some(idx) = self.command_history_index {
+            self.command_input = self.command_history[idx].clone();
+        }
+    }
+
+    /// Navigate to next command in history (Down arrow)
+    pub fn command_history_next(&mut self) {
+        match self.command_history_index {
+            None => {
+                // Not navigating history, do nothing
+            }
+            Some(idx) if idx + 1 >= self.command_history.len() => {
+                // Return to current input
+                self.command_history_index = None;
+                self.command_input = self.command_history_temp.clone();
+            }
+            Some(idx) => {
+                self.command_history_index = Some(idx + 1);
+                self.command_input = self.command_history[idx + 1].clone();
+            }
+        }
+    }
+
+    /// Add command to history (called after successful execution)
+    fn add_to_command_history(&mut self, cmd: &str) {
+        let cmd = cmd.trim().to_string();
+        if cmd.is_empty() {
+            return;
+        }
+
+        // Avoid duplicates at the end
+        if self.command_history.last() != Some(&cmd) {
+            self.command_history.push(cmd);
+            // Limit history size
+            if self.command_history.len() > 50 {
+                self.command_history.remove(0);
+            }
+        }
+    }
+
+    /// Reset history navigation state (called when entering command mode)
+    pub fn reset_command_history_nav(&mut self) {
+        self.command_history_index = None;
+        self.command_history_temp.clear();
+    }
+
     /// Execute the current command
     pub fn execute_command(&mut self, db: &Database) {
         let cmd = self.command_input.trim().to_lowercase();
@@ -731,6 +1540,9 @@ impl App {
             self.exit_command();
             return;
         }
+
+        // Add to command history
+        self.add_to_command_history(&cmd);
 
         match parts[0] {
             // Quit commands
@@ -768,6 +1580,22 @@ impl App {
                 self.exit_command();
             }
 
+            // Source filter commands
+            "filter" | "source" | "src" => {
+                if parts.len() > 1 {
+                    self.set_source_filter(Some(parts[1]));
+                } else {
+                    self.set_source_filter(None); // Clear filter
+                }
+                self.exit_command();
+            }
+
+            // Favorites commands
+            "fav" | "favorites" | "starred" => {
+                self.toggle_favorites_filter();
+                self.exit_command();
+            }
+
             // Tab navigation
             "installed" | "1" => {
                 self.switch_tab(Tab::Installed, db);
@@ -783,6 +1611,10 @@ impl App {
             }
             "bundles" | "4" => {
                 self.switch_tab(Tab::Bundles, db);
+                self.exit_command();
+            }
+            "discover" | "5" => {
+                self.switch_tab(Tab::Discover, db);
                 self.exit_command();
             }
 
@@ -814,6 +1646,24 @@ impl App {
                 self.exit_command();
             }
 
+            // Config
+            "c" | "config" | "settings" | "cfg" => {
+                self.open_config_menu();
+                self.exit_command();
+            }
+
+            // Create custom theme
+            "create-theme" | "new-theme" => {
+                self.create_custom_theme();
+                self.exit_command();
+            }
+
+            // Edit custom theme (open file location)
+            "edit-theme" => {
+                self.show_custom_theme_path();
+                self.exit_command();
+            }
+
             // Unknown command
             _ => {
                 self.set_status(format!("Unknown command: {}", parts[0]), true);
@@ -824,7 +1674,7 @@ impl App {
 
     /// Set theme by name
     fn set_theme_by_name(&mut self, name: &str) {
-        use super::theme::ThemeVariant;
+        use super::theme::{CustomTheme, ThemeVariant};
         self.theme_variant = match name {
             "mocha" | "catppuccin" | "catppuccin-mocha" => ThemeVariant::CatppuccinMocha,
             "latte" | "catppuccin-latte" => ThemeVariant::CatppuccinLatte,
@@ -832,15 +1682,80 @@ impl App {
             "nord" => ThemeVariant::Nord,
             "tokyo" | "tokyo-night" | "tokyonight" => ThemeVariant::TokyoNight,
             "gruvbox" => ThemeVariant::Gruvbox,
+            "custom" => {
+                if CustomTheme::exists() {
+                    ThemeVariant::Custom
+                } else {
+                    self.set_status(
+                        "Custom theme not found. Use :create-theme to create one.".to_string(),
+                        true,
+                    );
+                    return;
+                }
+            }
             _ => {
                 self.set_status(
-                    "Themes: mocha, latte, dracula, nord, tokyo, gruvbox".to_string(),
+                    "Themes: mocha, latte, dracula, nord, tokyo, gruvbox, custom".to_string(),
                     true,
                 );
                 return;
             }
         };
         self.set_status(format!("Theme: {}", self.theme().name), false);
+    }
+
+    /// Create custom theme file
+    fn create_custom_theme(&mut self) {
+        use super::theme::CustomTheme;
+
+        if CustomTheme::exists() {
+            if let Ok(path) = CustomTheme::file_path() {
+                self.set_status(
+                    format!("Custom theme already exists: {}", path.display()),
+                    false,
+                );
+            } else {
+                self.set_status("Custom theme already exists".to_string(), false);
+            }
+            return;
+        }
+
+        match CustomTheme::create_default_if_missing() {
+            Ok(true) => {
+                if let Ok(path) = CustomTheme::file_path() {
+                    self.set_status(format!("Created custom theme: {}", path.display()), false);
+                } else {
+                    self.set_status("Created custom theme file".to_string(), false);
+                }
+            }
+            Ok(false) => {
+                self.set_status("Custom theme already exists".to_string(), false);
+            }
+            Err(e) => {
+                self.set_status(format!("Failed to create theme: {}", e), true);
+            }
+        }
+    }
+
+    /// Show custom theme file path
+    fn show_custom_theme_path(&mut self) {
+        use super::theme::CustomTheme;
+
+        match CustomTheme::file_path() {
+            Ok(path) => {
+                if path.exists() {
+                    self.set_status(format!("Custom theme: {}", path.display()), false);
+                } else {
+                    self.set_status(
+                        "Custom theme not found. Create with :create-theme".to_string(),
+                        true,
+                    );
+                }
+            }
+            Err(e) => {
+                self.set_status(format!("Error: {}", e), true);
+            }
+        }
     }
 
     /// Set sort by name
@@ -858,25 +1773,31 @@ impl App {
         self.set_status(format!("Sort by: {:?}", self.sort_by), false);
     }
 
-    /// Get available commands for autocomplete hints
-    #[allow(dead_code)]
-    pub fn get_command_suggestions(&self) -> Vec<(&'static str, &'static str)> {
-        vec![
-            ("q, quit", "Exit the application"),
-            ("h, help", "Show help"),
-            ("r, refresh", "Refresh tools list"),
-            (
-                "t, theme [name]",
-                "Cycle or set theme (mocha, latte, dracula, nord, tokyo, gruvbox)",
-            ),
-            ("s, sort [field]", "Cycle or set sort (name, usage, recent)"),
-            ("1-4", "Switch to tab by number"),
-            ("i, install", "Install selected"),
-            ("d, delete", "Uninstall selected"),
-            ("u, update", "Update selected"),
-            ("undo, z", "Undo last action"),
-            ("redo, y", "Redo last undone action"),
-        ]
+    /// Set source filter
+    pub fn set_source_filter(&mut self, source: Option<&str>) {
+        match source {
+            Some(s) if !s.is_empty() => {
+                self.source_filter = Some(s.to_lowercase());
+                self.set_status(format!("Filter: source={}", s), false);
+            }
+            _ => {
+                self.source_filter = None;
+                self.set_status("Source filter cleared".to_string(), false);
+            }
+        }
+        self.apply_filter_and_sort();
+    }
+
+    /// Toggle favorites-only filter
+    pub fn toggle_favorites_filter(&mut self) {
+        self.favorites_only = !self.favorites_only;
+        let status = if self.favorites_only {
+            "Showing favorites only"
+        } else {
+            "Showing all tools"
+        };
+        self.set_status(status.to_string(), false);
+        self.apply_filter_and_sort();
     }
 
     // ==================== Selection ====================
@@ -1217,6 +2138,46 @@ impl App {
             self.pending_action = Some(PendingAction::Install(missing_tools));
         } else {
             self.set_status("All tools in bundle are already installed", false);
+        }
+    }
+
+    /// Track missing bundle tools as available (add to tools table with is_installed=false)
+    pub fn track_bundle_tools(&mut self, db: &Database) {
+        use crate::models::Tool;
+
+        let Some(bundle) = self.selected_bundle() else {
+            return;
+        };
+
+        // Find tools that don't exist in the tools table yet
+        let untracked: Vec<String> = bundle
+            .tools
+            .iter()
+            .filter(|name| db.get_tool_by_name(name).ok().flatten().is_none())
+            .cloned()
+            .collect();
+
+        if untracked.is_empty() {
+            self.set_status("All bundle tools are already tracked", false);
+            return;
+        }
+
+        let count = untracked.len();
+        let mut added = 0;
+
+        for name in &untracked {
+            let tool = Tool::new(name);
+            if db.insert_tool(&tool).is_ok() {
+                added += 1;
+            }
+        }
+
+        if added > 0 {
+            self.set_status(format!("Added {} tool(s) to Available", added), false);
+            // Refresh the labels cache in case we want to add labels later
+            self.labels_cache = db.get_all_tool_labels().unwrap_or_default();
+        } else {
+            self.set_status(format!("Failed to add {} tool(s)", count), true);
         }
     }
 
@@ -1581,5 +2542,167 @@ mod tests {
 
         // No more undo
         assert!(!history.can_undo());
+    }
+
+    // ==================== Mouse Handler Tests ====================
+
+    #[test]
+    fn test_click_list_item_tool() {
+        use crate::models::InstallSource;
+        let db = Database::open_in_memory().unwrap();
+        // Insert installed tools (App starts on Installed tab)
+        db.insert_tool(
+            &Tool::new("tool1")
+                .with_source(InstallSource::Cargo)
+                .installed(),
+        )
+        .unwrap();
+        db.insert_tool(
+            &Tool::new("tool2")
+                .with_source(InstallSource::Cargo)
+                .installed(),
+        )
+        .unwrap();
+        db.insert_tool(
+            &Tool::new("tool3")
+                .with_source(InstallSource::Cargo)
+                .installed(),
+        )
+        .unwrap();
+        let mut app = App::new(&db).unwrap();
+
+        assert_eq!(app.selected_index, 0);
+
+        // Click on second item (row 1)
+        app.click_list_item(1);
+        assert_eq!(app.selected_index, 1);
+
+        // Click on third item (row 2)
+        app.click_list_item(2);
+        assert_eq!(app.selected_index, 2);
+    }
+
+    #[test]
+    fn test_click_list_item_with_offset() {
+        use crate::models::InstallSource;
+        let db = Database::open_in_memory().unwrap();
+        for i in 0..10 {
+            db.insert_tool(
+                &Tool::new(format!("tool{}", i))
+                    .with_source(InstallSource::Cargo)
+                    .installed(),
+            )
+            .unwrap();
+        }
+        let mut app = App::new(&db).unwrap();
+
+        // Simulate scrolled list with offset 5
+        app.list_offset = 5;
+
+        // Click on first visible item (row 0) should select tool5
+        app.click_list_item(0);
+        assert_eq!(app.selected_index, 5);
+
+        // Click on row 3 should select tool8
+        app.click_list_item(3);
+        assert_eq!(app.selected_index, 8);
+    }
+
+    #[test]
+    fn test_click_list_item_out_of_bounds() {
+        use crate::models::InstallSource;
+        let db = Database::open_in_memory().unwrap();
+        db.insert_tool(
+            &Tool::new("tool1")
+                .with_source(InstallSource::Cargo)
+                .installed(),
+        )
+        .unwrap();
+        let mut app = App::new(&db).unwrap();
+
+        assert_eq!(app.selected_index, 0);
+
+        // Click on row 10 (out of bounds) - should not change selection
+        app.click_list_item(10);
+        assert_eq!(app.selected_index, 0);
+    }
+
+    #[test]
+    fn test_set_list_area() {
+        let db = Database::open_in_memory().unwrap();
+        let mut app = App::new(&db).unwrap();
+
+        assert!(app.last_list_area.is_none());
+
+        app.set_list_area(10, 20, 100, 50);
+        assert_eq!(app.last_list_area, Some((10, 20, 100, 50)));
+    }
+
+    #[test]
+    fn test_get_list_row() {
+        let db = Database::open_in_memory().unwrap();
+        let mut app = App::new(&db).unwrap();
+
+        // Set list area: x=10, y=5, width=80, height=20
+        app.set_list_area(10, 5, 80, 20);
+
+        // Click inside list area (accounting for border)
+        // y=6 is first content row (after top border at y=5)
+        let row = app.get_list_row(15, 6);
+        assert_eq!(row, Some(0));
+
+        // y=7 is second content row
+        let row = app.get_list_row(15, 7);
+        assert_eq!(row, Some(1));
+
+        // Click outside list area (x too small)
+        let row = app.get_list_row(5, 7);
+        assert!(row.is_none());
+
+        // Click outside list area (y too small - on border)
+        let row = app.get_list_row(15, 5);
+        assert!(row.is_none());
+
+        // Click outside list area (y too large)
+        let row = app.get_list_row(15, 30);
+        assert!(row.is_none());
+    }
+
+    #[test]
+    fn test_set_tab_area() {
+        let db = Database::open_in_memory().unwrap();
+        let mut app = App::new(&db).unwrap();
+
+        assert!(app.last_tab_area.is_none());
+
+        app.set_tab_area(0, 0, 120, 3);
+        assert_eq!(app.last_tab_area, Some((0, 0, 120, 3)));
+    }
+
+    #[test]
+    fn test_click_tab() {
+        let db = Database::open_in_memory().unwrap();
+        let mut app = App::new(&db).unwrap();
+
+        // Set tab area starting at x=0
+        app.set_tab_area(0, 0, 120, 3);
+
+        // Initially on Installed tab
+        assert_eq!(app.tab, Tab::Installed);
+
+        // Tab layout (accounting for border and padding):
+        // Content starts at x=1 (after border)
+        // Tab format: " title " with dividers
+        // Installed: " Installed " (11 chars), Available: " Available " (11 chars), etc.
+
+        // Click on first tab (Installed) - should stay on Installed
+        // Position 1-12 is " Installed "
+        app.click_tab(5, &db);
+        assert_eq!(app.tab, Tab::Installed);
+
+        // Click on second tab (Available)
+        // After Installed (12 chars) + divider (1) = start at 13
+        app.click_tab(15, &db);
+        assert_eq!(app.tab, Tab::Available);
     }
 }

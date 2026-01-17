@@ -40,7 +40,7 @@ fn handle_key_event(app: &mut App, key: KeyEvent, db: &Database) {
         return;
     }
 
-    // Handle overlays (help and details popup)
+    // Handle overlays (help, config menu, and details popup)
     if app.show_help {
         if matches!(
             key.code,
@@ -48,6 +48,11 @@ fn handle_key_event(app: &mut App, key: KeyEvent, db: &Database) {
         ) {
             app.show_help = false;
         }
+        return;
+    }
+
+    if app.show_config_menu {
+        handle_config_menu(app, key);
         return;
     }
 
@@ -65,6 +70,76 @@ fn handle_key_event(app: &mut App, key: KeyEvent, db: &Database) {
         InputMode::Normal => handle_normal_mode(app, key, db),
         InputMode::Search => handle_search_mode(app, key, db),
         InputMode::Command => handle_command_mode(app, key, db),
+        InputMode::JumpToLetter => handle_jump_mode(app, key),
+    }
+}
+
+fn handle_jump_mode(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc => app.exit_jump_mode(),
+        KeyCode::Char(c) if c.is_ascii_alphabetic() => app.jump_to_letter(c),
+        _ => app.exit_jump_mode(), // Cancel on any other key
+    }
+}
+
+fn handle_config_menu(app: &mut App, key: KeyEvent) {
+    use super::app::ConfigSection;
+    use crate::config::TuiTheme;
+
+    match key.code {
+        // Close without saving
+        KeyCode::Esc => app.close_config_menu(),
+
+        // Navigate between sections (Tab / Shift+Tab)
+        KeyCode::Tab => app.config_menu_next_section(),
+        KeyCode::BackTab => app.config_menu_prev_section(),
+
+        // Navigate within section (j/k or arrows)
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.config_menu_next_item();
+            // Live preview theme changes
+            if app.config_menu.section == ConfigSection::Theme {
+                let theme = TuiTheme::from_index(app.config_menu.theme_selected);
+                app.theme_variant = super::theme::ThemeVariant::from_config_theme(theme);
+            }
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.config_menu_prev_item();
+            // Live preview theme changes
+            if app.config_menu.section == ConfigSection::Theme {
+                let theme = TuiTheme::from_index(app.config_menu.theme_selected);
+                app.theme_variant = super::theme::ThemeVariant::from_config_theme(theme);
+            }
+        }
+
+        // Left/right navigation for buttons
+        KeyCode::Char('h') | KeyCode::Left => {
+            if app.config_menu.section == ConfigSection::Buttons {
+                app.config_menu.button_focused = 0; // Save
+            }
+        }
+        KeyCode::Char('l') | KeyCode::Right => {
+            if app.config_menu.section == ConfigSection::Buttons {
+                app.config_menu.button_focused = 1; // Cancel
+            }
+        }
+
+        // Toggle checkbox / select radio / activate button
+        KeyCode::Char(' ') => {
+            match app.config_menu.section {
+                ConfigSection::Sources => app.config_menu_toggle_source(),
+                ConfigSection::Buttons => app.config_menu_select(),
+                _ => {} // Radio buttons auto-select on navigation
+            }
+        }
+
+        // Select current item / confirm
+        KeyCode::Enter => app.config_menu_select(),
+
+        // Quick save (s or Ctrl+S)
+        KeyCode::Char('s') => app.save_config_menu(),
+
+        _ => {}
     }
 }
 
@@ -123,9 +198,23 @@ fn handle_normal_mode(app: &mut App, key: KeyEvent, db: &Database) {
         KeyCode::Char('2') => app.switch_tab(Tab::Available, db),
         KeyCode::Char('3') => app.switch_tab(Tab::Updates, db),
         KeyCode::Char('4') => app.switch_tab(Tab::Bundles, db),
+        KeyCode::Char('5') => app.switch_tab(Tab::Discover, db),
 
         // Search
         KeyCode::Char('/') => app.enter_search(),
+
+        // Search navigation (n/N for next/prev match with wrapping)
+        KeyCode::Char('n') => app.search_next(),
+        KeyCode::Char('N') => app.search_prev(),
+
+        // Jump to letter (vim f)
+        KeyCode::Char('f') => app.enter_jump_mode(),
+
+        // Toggle favorite on selected tool
+        KeyCode::Char('*') => app.toggle_favorite(db),
+
+        // Toggle favorites-only filter
+        KeyCode::Char('F') => app.toggle_favorites_filter(),
 
         // Command palette (vim-style)
         KeyCode::Char(':') => app.enter_command(),
@@ -152,6 +241,9 @@ fn handle_normal_mode(app: &mut App, key: KeyEvent, db: &Database) {
                 app.request_install();
             }
         }
+        KeyCode::Char('a') if app.tab == Tab::Bundles => {
+            app.track_bundle_tools(db); // Add missing bundle tools to Available
+        }
         KeyCode::Char('D') => app.request_uninstall(), // Shift+d for uninstall (safer)
         KeyCode::Char('u') => app.request_update(),    // Update tools with available updates
 
@@ -163,6 +255,9 @@ fn handle_normal_mode(app: &mut App, key: KeyEvent, db: &Database) {
 
         // Theme cycling
         KeyCode::Char('t') => app.cycle_theme(),
+
+        // Config menu
+        KeyCode::Char('c') => app.open_config_menu(),
 
         // Undo/redo
         KeyCode::Char('z') if key.modifiers.contains(KeyModifiers::CONTROL) => app.undo(),
@@ -199,6 +294,9 @@ fn handle_command_mode(app: &mut App, key: KeyEvent, db: &Database) {
     match key.code {
         KeyCode::Esc => app.exit_command(),
         KeyCode::Enter => app.execute_command(db),
+        KeyCode::Tab => app.autocomplete_command(),
+        KeyCode::Up => app.command_history_prev(),
+        KeyCode::Down => app.command_history_next(),
         KeyCode::Backspace => {
             if app.command_input.is_empty() {
                 app.exit_command();
@@ -212,6 +310,12 @@ fn handle_command_mode(app: &mut App, key: KeyEvent, db: &Database) {
 }
 
 fn handle_mouse_event(app: &mut App, mouse: crossterm::event::MouseEvent, db: &Database) {
+    // Handle config menu mouse events separately
+    if app.show_config_menu {
+        handle_config_menu_mouse(app, mouse);
+        return;
+    }
+
     // Don't handle mouse during overlays or special modes
     if app.show_help || app.show_details_popup || app.has_pending_action() {
         return;
@@ -263,6 +367,96 @@ fn handle_mouse_event(app: &mut App, mouse: crossterm::event::MouseEvent, db: &D
             if let Some(row) = app.get_list_row(x, y) {
                 app.click_list_item(row);
                 app.toggle_selection();
+            }
+        }
+        _ => {}
+    }
+}
+
+fn handle_config_menu_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
+    use super::app::{ConfigSection, config_menu_layout};
+    use crate::config::TuiTheme;
+
+    // Use stored popup area from renderer (avoids calculation mismatch)
+    let Some((popup_x, popup_y, popup_width, popup_height)) = app.last_config_popup_area else {
+        return; // Popup hasn't been rendered yet
+    };
+
+    // Content area is inside borders (top/bottom only, 2 chars total)
+    let content_x = popup_x + 1;
+    let content_y = popup_y + 1;
+    let content_height = popup_height.saturating_sub(2) as usize;
+
+    // Calculate total content lines using constants
+    let custom_selected = app.config_menu.theme_selected == config_menu_layout::CUSTOM_THEME_INDEX;
+    let total_lines = config_menu_layout::total_lines(custom_selected);
+    let max_scroll = total_lines.saturating_sub(content_height);
+
+    match mouse.kind {
+        MouseEventKind::ScrollUp => {
+            app.config_menu_scroll_up();
+        }
+        MouseEventKind::ScrollDown => {
+            app.config_menu_scroll_down(total_lines, content_height);
+        }
+        MouseEventKind::Down(MouseButton::Left) => {
+            let x = mouse.column;
+            let y = mouse.row;
+
+            // Check if click is inside popup content area
+            if x >= content_x
+                && x < popup_x + popup_width - 1
+                && y >= content_y
+                && y < popup_y + popup_height - 1
+            {
+                // Calculate which line was clicked (accounting for scroll)
+                let clicked_line =
+                    (y - content_y) as usize + app.config_menu.scroll_offset.min(max_scroll);
+
+                // Use ConfigSection methods for line detection
+                let (ai_start, ai_end) = ConfigSection::AiProvider.item_lines(custom_selected);
+                let (theme_start, theme_end) = ConfigSection::Theme.item_lines(custom_selected);
+                let (sources_start, sources_end) =
+                    ConfigSection::Sources.item_lines(custom_selected);
+                let (usage_start, usage_end) = ConfigSection::UsageMode.item_lines(custom_selected);
+                let buttons_line = ConfigSection::Buttons.start_line(custom_selected);
+
+                if clicked_line >= ai_start && clicked_line <= ai_end {
+                    // AI Provider item clicked
+                    app.config_menu.section = ConfigSection::AiProvider;
+                    let item = clicked_line - ai_start;
+                    if item < ConfigSection::AiProvider.item_count() {
+                        app.config_menu.ai_selected = item;
+                    }
+                } else if clicked_line >= theme_start && clicked_line <= theme_end {
+                    // Theme item clicked
+                    app.config_menu.section = ConfigSection::Theme;
+                    let item = clicked_line - theme_start;
+                    if item < ConfigSection::Theme.item_count() {
+                        app.config_menu.theme_selected = item;
+                        let theme = TuiTheme::from_index(app.config_menu.theme_selected);
+                        app.theme_variant = super::theme::ThemeVariant::from_config_theme(theme);
+                    }
+                } else if clicked_line >= sources_start && clicked_line <= sources_end {
+                    // Sources item clicked
+                    app.config_menu.section = ConfigSection::Sources;
+                    let item = clicked_line - sources_start;
+                    if item < ConfigSection::Sources.item_count() {
+                        app.config_menu.source_focused = item;
+                        app.config_menu_toggle_source();
+                    }
+                } else if clicked_line >= usage_start && clicked_line <= usage_end {
+                    // Usage item clicked
+                    app.config_menu.section = ConfigSection::UsageMode;
+                    let item = clicked_line - usage_start;
+                    if item < ConfigSection::UsageMode.item_count() {
+                        app.config_menu.usage_selected = item;
+                    }
+                } else if clicked_line >= buttons_line {
+                    // Buttons clicked
+                    app.config_menu.section = ConfigSection::Buttons;
+                    app.config_menu_select();
+                }
             }
         }
         _ => {}

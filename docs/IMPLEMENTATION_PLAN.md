@@ -19,8 +19,9 @@ Transform hoard from a CLI tool tracker into the **AI-powered developer tool man
 |-------|-------|----------|--------|
 | 1 | CLI Simplification | 2-3 weeks | ✅ Complete |
 | 2 | AI Enhancements | 2-3 weeks | ✅ Complete |
-| 3 | TUI MVP | 4-6 weeks | 🔲 Not Started |
-| 4 | TUI Polish | 2-3 weeks | 🔲 Not Started |
+| 3 | TUI MVP | 4-6 weeks | ✅ Complete |
+| 4 | TUI Polish | 2-3 weeks | ✅ Complete |
+| 5 | TUI Discover Tab | TBD | 🔲 Pending Clarification |
 
 ---
 
@@ -501,18 +502,20 @@ hoards usage reset [-f]          # Reset all counters
 
 ---
 
-## Phase 3: TUI MVP
+## Phase 3: TUI MVP ✅
+
+**Status:** COMPLETED
 
 **Goal:** Build a functional terminal UI using Ratatui.
 
-### 3.1 Project Setup
+### 3.1 Project Setup ✅
 
 **Tasks:**
-- [ ] Add ratatui and crossterm dependencies
-- [ ] Create `src/tui/` module structure
-- [ ] Set up basic app state management
-- [ ] Implement terminal initialization/cleanup
-- [ ] Add `hoard tui` command entry point
+- [x] Add ratatui and crossterm dependencies
+- [x] Create `src/tui/` module structure
+- [x] Set up basic app state management
+- [x] Implement terminal initialization/cleanup
+- [x] Add `hoard tui` command entry point
 
 **File structure:**
 ```
@@ -521,24 +524,16 @@ src/tui/
 ├── app.rs          # App state and logic
 ├── ui.rs           # UI rendering
 ├── event.rs        # Event handling
-├── widgets/        # Custom widgets
-│   ├── tool_list.rs
-│   ├── tool_details.rs
-│   └── status_bar.rs
-└── tabs/           # Tab views
-    ├── installed.rs
-    ├── available.rs
-    ├── updates.rs
-    └── bundles.rs
+└── theme.rs        # Theme definitions
 ```
 
 ---
 
-### 3.2 Core Layout
+### 3.2 Core Layout ✅
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ hoard  [1]Installed [2]Available [3]Updates [4]Bundles  [?] │
+│ hoard  [1]Installed [2]Available [3]Updates [4]Bundles [5]Discover │
 ├────────────────────────┬────────────────────────────────────┤
 │ Tools            [147] │ Details                            │
 │ ────────────────────── │ ──────────────────────────────────│
@@ -546,106 +541,341 @@ src/tui/
 │  (list widget)         │  (details widget)                  │
 │                        │                                    │
 ├────────────────────────┴────────────────────────────────────┤
-│ (status bar with keybindings)                               │
+│ (status bar with keybindings)   🤖  ⟳ 5m v0.2.1           │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 **Tasks:**
-- [ ] Implement main layout with constraints
-- [ ] Create header with tab bar
-- [ ] Create left panel (tool list)
-- [ ] Create right panel (details)
-- [ ] Create footer (status/help bar)
-- [ ] Implement responsive resizing
+- [x] Implement main layout with constraints
+- [x] Create header with tab bar
+- [x] Create left panel (tool list)
+- [x] Create right panel (details)
+- [x] Create footer (status/help bar with AI/GitHub indicators)
+- [x] Implement responsive resizing (stacked layout for narrow terminals)
 
 ---
 
-### 3.3 Navigation & Input
+### 3.3 Navigation & Input ✅
 
 **Tasks:**
-- [ ] Implement vim-style navigation (j/k/h/l)
-- [ ] Implement tab switching (1-4, [, ])
-- [ ] Implement selection (space, v for range)
-- [ ] Implement search mode (/)
-- [ ] Implement help modal (?)
-- [ ] Handle terminal resize events
+- [x] Implement vim-style navigation (j/k/g/G)
+- [x] Implement tab switching (1-5, [, ])
+- [x] Implement selection (space, Ctrl+a, x)
+- [x] Implement search mode (/)
+- [x] Implement help modal (?)
+- [x] Handle terminal resize events
 
 ---
 
-### 3.4 Tab Views
+### 3.4 Tab Views ✅
 
 **Installed Tab:**
-- [ ] List installed tools with status indicators
-- [ ] Show source, version, usage count
-- [ ] Sort by name/usage/date
-- [ ] Filter by category/label/source
+- [x] List installed tools with status indicators
+- [x] Show source, usage count, GitHub stars
+- [x] Sort by name/usage/date
+- [x] Filter by search query
 
 **Available Tab:**
-- [ ] List tools in database but not installed
-- [ ] Show GitHub stars, descriptions
-- [ ] Quick install action
+- [x] List tools in database but not installed
+- [x] Show GitHub stars, descriptions
+- [x] Quick install action
 
 **Updates Tab:**
-- [ ] List tools with available updates
-- [ ] Show current vs available version
-- [ ] Batch update selection
+- [x] List tools with available updates
+- [x] Show current vs available version
+- [x] Batch update selection
 
 **Bundles Tab:**
-- [ ] List bundles with tool counts
-- [ ] Show bundle contents
-- [ ] Quick install bundle action
+- [x] List bundles with tool counts
+- [x] Show bundle contents with install status
+- [x] Quick install bundle action (i)
+- [x] Track missing tools to Available (a)
+
+**Discover Tab (shell only):**
+- [x] Basic UI structure with search bar and results area
+- [x] Empty state with usage instructions
+- [ ] Search functionality (see Phase 5)
+- [ ] AI integration (see Phase 5)
 
 ---
 
-### 3.5 Actions
+### 3.5 Actions ✅
 
 **Tasks:**
-- [ ] Implement install action (i)
-- [ ] Implement uninstall action (d)
-- [ ] Implement update action (u)
-- [ ] Implement edit action (e)
-- [ ] Implement refresh action (r)
-- [ ] Show confirmation dialogs for destructive actions
-- [ ] Show progress indicators for long operations
+- [x] Implement install action (i)
+- [x] Implement uninstall action (D)
+- [x] Implement update action (u)
+- [x] Implement refresh action (r)
+- [x] Show confirmation dialogs for destructive actions
+- [x] Show progress indicators for long operations
 
 ---
 
-## Phase 4: TUI Polish
+## Phase 4: TUI Polish ✅
+
+**Status:** COMPLETED
 
 **Goal:** Add advanced features and polish.
 
-### 4.1 Visual Enhancements
+### 4.1 Visual Enhancements ✅
 
 **Tasks:**
-- [ ] Add usage sparklines (7-day trend)
-- [ ] Add health indicators (🟢🟡🔴)
-- [ ] Add GitHub stars inline
-- [ ] Implement theme support (Catppuccin, etc.)
-- [ ] Add loading spinners
-- [ ] Add success/error notifications
+- [x] Add usage sparklines (7-day trend) with dimmed theme colors
+- [x] Add health indicators (● green/yellow/red based on recency)
+- [x] Add GitHub stars inline (★ 1.2K format)
+- [x] Implement theme support (6 themes: Catppuccin Mocha/Latte, Dracula, Nord, Tokyo Night, Gruvbox)
+- [x] Add loading indicators
+- [x] Add success/error status messages
+- [x] Add labels as colored pills in details view
+- [x] User-friendly datetime formatting with local timezone
 
 ---
 
-### 4.2 Advanced Features
+### 4.2 Advanced Features ✅
 
 **Tasks:**
-- [ ] Implement undo/redo system
-- [ ] Add command palette (:)
-- [ ] Implement fuzzy search (fzf-style)
-- [ ] Add mouse support (optional)
-- [ ] Implement bulk operations UI
-- [ ] Add AI assistant panel
+- [x] Implement undo/redo system (Ctrl+z/Ctrl+y)
+- [x] Add command palette (:) with vim-style commands
+- [x] Implement fuzzy search (fzf-style with scoring)
+- [x] Add mouse support (click, scroll, right-click)
+- [x] Implement bulk operations UI (multi-select)
+- [ ] Add AI assistant panel (see Phase 5)
 
 ---
 
-### 4.3 Configuration
+### 4.3 Configuration Menu & JSON Config
+
+**Status:** ✅ COMPLETE
+
+**Goal:** Migrate from TOML to JSON config with JSON Schema validation, and add interactive config menu in TUI.
+
+#### Config File Migration (TOML → JSON)
+
+**Current format:** `~/.config/hoards/config.toml`
+```toml
+[ai]
+provider = "claude"
+
+[usage]
+mode = "hook"
+shell = "fish"
+```
+
+**New format:** `~/.config/hoards/config.json`
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/user/hoards/main/schema/config.schema.json",
+  "ai": {
+    "provider": "claude"
+  },
+  "usage": {
+    "mode": "hook",
+    "shell": "fish"
+  },
+  "tui": {
+    "theme": "catppuccin-mocha"
+  },
+  "sources": {
+    "cargo": true,
+    "apt": true,
+    "pip": false,
+    "npm": false,
+    "brew": false,
+    "flatpak": true,
+    "manual": true
+  }
+}
+```
+
+**Tasks - Config Migration:**
+- [x] Create JSON Schema (`schema/config.schema.json`)
+- [x] Update `HoardConfig` struct with new fields
+- [x] Switch from `toml` to `serde_json` for config serialization
+- [x] Add migration logic (read TOML if exists, write JSON)
+- [x] Update `config_path()` to return `.json` extension
+- [ ] Add schema validation on load (deferred - JSON serialization handles validation)
+
+#### Config Menu in TUI
+
+**Trigger:**
+- Shortcut key `c` or `:config` command
+- Auto-launch on first run (no config file exists)
+
+**Menu Structure:**
+```
+┌─────────────────── Configuration ────────────────────┐
+│                                                       │
+│  AI Provider                                          │
+│  ○ None (disabled)                                    │
+│  ○ Claude                                             │
+│  ● Gemini                                             │
+│  ○ Codex                                              │
+│  ○ Opencode                                           │
+│                                                       │
+│  Theme                                                │
+│  ● Catppuccin Mocha                                   │
+│  ○ Catppuccin Latte                                   │
+│  ○ Dracula                                            │
+│  ○ Nord                                               │
+│  ○ Tokyo Night                                        │
+│  ○ Gruvbox                                            │
+│                                                       │
+│  Package Managers (select all that apply)             │
+│  [x] cargo     [x] apt      [ ] pip                   │
+│  [ ] npm       [ ] brew     [x] flatpak               │
+│  [x] manual                                           │
+│                                                       │
+│  Usage Tracking                                       │
+│  ○ Hook (real-time)                                   │
+│  ● Scan (manual)                                      │
+│                                                       │
+│  [Save]  [Cancel]                                     │
+└───────────────────────────────────────────────────────┘
+```
+
+**Tasks - Config Menu:**
+- [x] Create `ConfigMenuState` in `app.rs`
+- [x] Add overlay-style config menu (like help panel)
+- [x] Implement `render_config_menu()` in `ui.rs`
+- [x] Handle config menu navigation (j/k, Tab, space, Enter)
+- [x] Add `c` keybinding to open config
+- [x] Add `:config` command (also `:settings`, `:cfg`)
+- [x] Auto-launch config menu if no config file exists
+- [x] Save config and apply changes immediately (theme, etc.)
+
+**Tasks - General:**
+- [ ] Configurable keybindings (future)
+- [x] Theme cycling (t key)
+- [ ] Configurable default view (future)
+- [ ] Persist window state (future)
+
+---
+
+## Phase 5: TUI Discover Tab 🔲
+
+**Status:** PENDING USER CLARIFICATION
+
+**Goal:** Implement search and AI capabilities in the Discover tab.
+
+### Current State
+
+The Discover tab UI shell is complete:
+- Search bar with placeholder
+- Results list with source icons and star counts
+- Empty state with instructions
+- Data structures: `DiscoverResult`, `DiscoverSource`
+
+### 5.1 External Search Integration
+
+**⚠️ NEEDS CLARIFICATION:** Which sources should be supported?
+
+**Potential Sources:**
+| Source | API | Rate Limits | Notes |
+|--------|-----|-------------|-------|
+| GitHub | REST/GraphQL | 5000/hr authenticated | Best for CLI tools |
+| crates.io | REST | Generous | Rust ecosystem |
+| PyPI | REST | No auth needed | Python packages |
+| npm | REST | No auth needed | Node.js packages |
+| Homebrew | Formulae JSON | Static file | macOS focus |
+| apt | Local cache | N/A | Debian/Ubuntu |
+
+**Questions for user:**
+1. Which sources are priority? All or subset?
+2. Should searches be parallel across all sources or user-selectable?
+3. How to handle rate limiting? Queue? Cache?
+4. Should we deduplicate results (same tool on multiple sources)?
 
 **Tasks:**
-- [ ] Add TUI config file support
-- [ ] Configurable keybindings
-- [ ] Configurable colors/theme
-- [ ] Configurable default view
-- [ ] Persist window state
+- [ ] Implement GitHub search via `gh` CLI or API
+- [ ] Implement crates.io search
+- [ ] Implement PyPI search
+- [ ] Implement npm search
+- [ ] Add source filtering in UI (checkboxes or commands)
+- [ ] Add result caching to avoid repeated API calls
+- [ ] Handle rate limiting gracefully
+
+---
+
+### 5.2 Search UX
+
+**⚠️ NEEDS CLARIFICATION:** How should search work?
+
+**Options:**
+1. **Live search** - Results update as you type (debounced)
+2. **Submit search** - Press Enter to search
+3. **Command-based** - `:search github ripgrep` style
+
+**Questions for user:**
+1. Live search or explicit submit?
+2. Should `/` in Discover tab behave differently than other tabs?
+3. Should there be source-specific search commands (`:gh`, `:crates`, etc.)?
+
+**Tasks:**
+- [ ] Implement search input handling in Discover tab
+- [ ] Add loading indicator during search
+- [ ] Handle search errors gracefully
+- [ ] Add search history (up/down to recall)
+
+---
+
+### 5.3 AI Integration
+
+**⚠️ NEEDS CLARIFICATION:** What AI features in Discover?
+
+**Potential Features:**
+1. **Natural language search** - "tools for working with JSON"
+2. **Recommendations** - "suggest tools based on my usage"
+3. **Similar tools** - "tools like ripgrep"
+4. **Category browsing** - AI-curated tool categories
+
+**Questions for user:**
+1. Which AI features are priority?
+2. Should AI suggestions be a separate mode or integrated with search?
+3. How to present AI reasoning (show "why" or just results)?
+4. Should `:ai <query>` command trigger AI mode?
+
+**Tasks:**
+- [ ] Define AI prompt templates for discovery
+- [ ] Implement `:ai` command in Discover tab
+- [ ] Show AI-suggested tools with reasoning
+- [ ] Allow adding AI suggestions to Available/installing directly
+
+---
+
+### 5.4 Actions on Results
+
+**⚠️ NEEDS CLARIFICATION:** What actions on discover results?
+
+**Potential Actions:**
+| Key | Action | Description |
+|-----|--------|-------------|
+| `i` | Install | Install selected tool directly |
+| `a` | Add to Available | Track without installing |
+| `Enter` | View details | Show full description, README preview |
+| `o` | Open URL | Open GitHub/package page in browser |
+| `b` | Add to bundle | Add to existing or new bundle |
+
+**Questions for user:**
+1. Which actions are essential?
+2. Should install attempt to detect the right source automatically?
+3. How to handle tools that exist on multiple sources?
+
+**Tasks:**
+- [ ] Implement install from discover results
+- [ ] Implement add to Available
+- [ ] Implement open URL in browser
+- [ ] Add details view for discover results
+
+---
+
+### 5.5 UI Refinements
+
+**Tasks:**
+- [ ] Add source filter toggles in UI
+- [ ] Show search scope indicator (which sources active)
+- [ ] Add keyboard shortcuts help specific to Discover
+- [ ] Handle empty results gracefully
+- [ ] Add "popular tools" default view (trending on GitHub?)
 
 ---
 
@@ -671,9 +901,15 @@ src/tui/
 - [ ] Responsive on 80x24 minimum terminal
 
 ### Phase 4
-- [ ] Theme switching works
-- [ ] Undo/redo for all destructive operations
+- [x] Theme switching works (6 themes, t to cycle)
+- [x] Undo/redo for selections and filters
 - [ ] User satisfaction in feedback
+
+### Phase 5 (Pending)
+- [ ] Search returns results from at least 2 sources
+- [ ] AI suggestions provide useful recommendations
+- [ ] Install from discover works end-to-end
+- [ ] Response time < 2 seconds for cached searches
 
 ---
 
