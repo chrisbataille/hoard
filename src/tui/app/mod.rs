@@ -1,0 +1,899 @@
+//! Application state for the TUI
+//!
+//! This module is organized into submodules:
+//! - `types`: Enums, state structs, and constants
+//! - `traits`: SelectableList trait for unified navigation
+//! - `components`: CacheManager, CommandPalette, fuzzy matching
+//! - `list_state`: BundleState and related list management
+//! - `actions`: Selection, undo/redo, install/uninstall actions
+//! - `config_menu`: Configuration menu operations
+//! - `discover`: Discover tab operations
+//! - `readme`: README popup operations
+
+mod actions;
+mod command_exec;
+mod components;
+mod config_menu;
+mod discover;
+mod list_state;
+mod readme;
+#[cfg(test)]
+mod tests;
+mod traits;
+mod types;
+
+use std::collections::{HashMap, HashSet};
+
+use anyhow::Result;
+
+use crate::Update;
+use crate::config::{AiProvider, HoardConfig};
+use crate::db::Database;
+use crate::models::{Bundle, Tool};
+
+// Re-exports
+pub use components::{CacheManager, CommandPalette, fuzzy_match, fuzzy_match_positions};
+pub use list_state::BundleState;
+pub use traits::SelectableList;
+pub use types::{
+    ActionHistory, BackgroundOp, ConfigMenuState, ConfigSection, DiscoverResult, DiscoverSortBy,
+    DiscoverSource, ErrorModal, InputMode, InstallOption, LoadingProgress, Notification,
+    NotificationLevel, PACKAGE_MANAGERS, PendingAction, ReadmePopup, SortBy, StatusMessage, Tab,
+    config_menu_layout,
+};
+
+/// Tracks an async AI operation running in a background thread
+pub struct AiOperation {
+    pub start_time: std::time::Instant,
+    pub thread_handle:
+        std::thread::JoinHandle<Result<Vec<crate::discover::DiscoverResult>, String>>,
+}
+
+/// Main application state
+pub struct App {
+    pub running: bool,
+    pub tab: Tab,
+    pub input_mode: InputMode,
+    pub search_query: String,
+    pub source_filter: Option<String>, // Filter by source (cargo, apt, etc.)
+    pub favorites_only: bool,          // Filter to show only favorites
+
+    // Tool list state
+    pub all_tools: Vec<Tool>, // All tools for current tab (unfiltered)
+    pub tools: Vec<Tool>,     // Filtered/sorted tools to display
+    pub selected_index: usize,
+    pub list_offset: usize,
+
+    // Extracted components
+    pub cache: CacheManager,     // Usage, GitHub info, labels caches
+    pub bundles: BundleState,    // Bundle list and selection
+    pub command: CommandPalette, // Command palette input and history
+
+    // Updates state
+    pub available_updates: HashMap<String, Update>,
+    pub updates_checked: bool,
+    pub updates_loading: bool,
+
+    // UI state
+    pub show_help: bool,
+    pub show_details_popup: bool,
+    pub sort_by: SortBy,
+    pub theme_variant: super::theme::ThemeVariant,
+
+    // Multi-selection
+    pub selected_tools: HashSet<String>,
+
+    // Actions
+    pub pending_action: Option<PendingAction>,
+    pub status_message: Option<StatusMessage>,
+
+    // Background operations (executed by main loop with loading indicator)
+    pub background_op: Option<BackgroundOp>,
+    pub loading_progress: LoadingProgress,
+
+    // Undo/redo history
+    pub history: ActionHistory,
+
+    // Mouse interaction state
+    pub last_list_area: Option<(u16, u16, u16, u16)>, // (x, y, width, height) of tool list
+    pub last_tab_area: Option<(u16, u16, u16, u16)>,  // (x, y, width, height) of tabs
+    pub last_config_popup_area: Option<(u16, u16, u16, u16)>, // (x, y, width, height) of config popup
+
+    // Feature availability status (for footer display)
+    pub ai_available: bool, // AI provider is configured
+    pub gh_available: bool, // GitHub CLI is installed
+
+    // Last sync timestamp
+    pub last_sync: Option<chrono::DateTime<chrono::Utc>>,
+
+    // Discover tab state
+    pub discover_query: String,
+    pub discover_results: Vec<DiscoverResult>,
+    pub discover_selected: usize,
+    pub discover_loading: bool,
+    pub discover_sort_by: DiscoverSortBy,
+    pub discover_ai_enabled: bool,                // AI search toggle
+    pub discover_source_filters: HashSet<String>, // Selected source filters
+    pub discover_history: Vec<crate::db::DiscoverSearchEntry>, // Search history
+    pub discover_history_index: Option<usize>,    // Current position in history (None = new)
+    pub discover_filter_focus: Option<usize>,     // Focused filter chip index
+
+    // Config menu state
+    pub show_config_menu: bool,
+    pub config_menu: ConfigMenuState,
+
+    // Toast notifications (auto-dismiss)
+    pub notifications: Vec<Notification>,
+
+    // Error modal (blocks until dismissed)
+    pub error_modal: Option<ErrorModal>,
+
+    // README popup
+    pub readme_popup: Option<ReadmePopup>,
+
+    // Async AI operation tracking
+    pub ai_operation: Option<AiOperation>,
+}
+
+impl App {
+    pub fn new(db: &Database) -> Result<Self> {
+        let all_tools = db.list_tools(true, None)?; // installed only
+        let bundles = db.list_bundles()?;
+        let tools = all_tools.clone();
+
+        // Load config and check feature availability
+        let config_exists = HoardConfig::exists();
+        let config = HoardConfig::load().unwrap_or_default();
+        let ai_available = config.ai.provider != AiProvider::None;
+        let gh_available = which::which("gh").is_ok();
+
+        // Get theme from config
+        let theme_variant = super::theme::ThemeVariant::from_config_theme(config.tui.theme);
+
+        // Auto-show config menu if no config file exists
+        let show_config_menu = !config_exists;
+        let config_menu = if show_config_menu {
+            ConfigMenuState::from_config(&config)
+        } else {
+            ConfigMenuState::default()
+        };
+
+        Ok(Self {
+            running: true,
+            tab: Tab::Installed,
+            input_mode: InputMode::Normal,
+            search_query: String::new(),
+            source_filter: None,
+            favorites_only: false,
+            all_tools,
+            tools,
+            selected_index: 0,
+            list_offset: 0,
+            cache: CacheManager::new(db),
+            bundles: BundleState::new(bundles),
+            command: CommandPalette::new(),
+            available_updates: HashMap::new(),
+            updates_checked: false,
+            updates_loading: false,
+            show_help: false,
+            show_details_popup: false,
+            sort_by: SortBy::default(),
+            theme_variant,
+            selected_tools: HashSet::new(),
+            pending_action: None,
+            status_message: None,
+            background_op: None,
+            loading_progress: LoadingProgress::default(),
+            history: ActionHistory::new(50), // Keep 50 actions max
+            last_list_area: None,
+            last_tab_area: None,
+            last_config_popup_area: None,
+            ai_available,
+            gh_available,
+            last_sync: db.get_last_sync_time().ok().flatten(),
+            discover_query: String::new(),
+            discover_results: Vec::new(),
+            discover_selected: 0,
+            discover_loading: false,
+            discover_sort_by: DiscoverSortBy::default(),
+            discover_ai_enabled: false,
+            discover_source_filters: config
+                .sources
+                .enabled_sources()
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            discover_history: db.get_discover_history(100).unwrap_or_default(),
+            discover_history_index: None,
+            discover_filter_focus: None,
+            show_config_menu,
+            config_menu,
+            notifications: Vec::new(),
+            error_modal: None,
+            readme_popup: None,
+            ai_operation: None,
+        })
+    }
+
+    // ========================================================================
+    // Core Lifecycle
+    // ========================================================================
+
+    /// Quit the application
+    pub fn quit(&mut self) {
+        self.running = false;
+    }
+
+    /// Cycle to the next theme
+    pub fn cycle_theme(&mut self) {
+        self.theme_variant = self.theme_variant.next();
+        self.set_status(
+            format!("Theme: {}", self.theme_variant.display_name()),
+            false,
+        );
+    }
+
+    /// Get the current theme
+    pub fn theme(&self) -> super::theme::Theme {
+        self.theme_variant.theme()
+    }
+
+    // ========================================================================
+    // Tab Navigation
+    // ========================================================================
+
+    /// Switch to a specific tab
+    pub fn switch_tab(&mut self, tab: Tab, db: &Database) {
+        if self.tab != tab {
+            self.tab = tab;
+            self.selected_index = 0;
+            self.list_offset = 0;
+            self.search_query.clear();
+            self.refresh_tools(db);
+        }
+    }
+
+    /// Go to next tab
+    pub fn next_tab(&mut self, db: &Database) {
+        let next_index = (self.tab.index() + 1) % Tab::all().len();
+        if let Some(tab) = Tab::from_index(next_index) {
+            self.switch_tab(tab, db);
+        }
+    }
+
+    /// Go to previous tab
+    pub fn prev_tab(&mut self, db: &Database) {
+        let prev_index = if self.tab.index() == 0 {
+            Tab::all().len() - 1
+        } else {
+            self.tab.index() - 1
+        };
+        if let Some(tab) = Tab::from_index(prev_index) {
+            self.switch_tab(tab, db);
+        }
+    }
+
+    // ========================================================================
+    // Tool List Management
+    // ========================================================================
+
+    /// Refresh tool list based on current tab
+    pub fn refresh_tools(&mut self, db: &Database) {
+        let result = match self.tab {
+            Tab::Installed => db.list_tools(true, None),
+            Tab::Available => db.list_tools(false, None),
+            Tab::Updates => {
+                // For Updates tab, only show tools with available updates
+                if self.updates_checked {
+                    let update_names: HashSet<_> = self.available_updates.keys().cloned().collect();
+                    db.list_tools(true, None).map(|mut tools| {
+                        tools.retain(|t| update_names.contains(&t.name));
+                        tools
+                    })
+                } else {
+                    // No updates checked yet, show empty list
+                    Ok(Vec::new())
+                }
+            }
+            Tab::Bundles => db.list_tools(true, None),
+            Tab::Discover => Ok(Vec::new()), // Discover has its own search results
+        };
+
+        if let Ok(mut tools) = result {
+            // For Available tab, filter to only non-installed tools
+            if self.tab == Tab::Available {
+                tools.retain(|t| !t.is_installed);
+            }
+            self.all_tools = tools;
+            self.apply_filter_and_sort();
+        }
+
+        // Also refresh bundles if on that tab
+        if self.tab == Tab::Bundles {
+            let _ = self.bundles.reload(db);
+        }
+    }
+
+    /// Get update info for a tool if available
+    pub fn get_update(&self, tool_name: &str) -> Option<&Update> {
+        self.available_updates.get(tool_name)
+    }
+
+    /// Apply current search filter and sort to tools
+    pub fn apply_filter_and_sort(&mut self) {
+        // Start with all tools, optionally filtered by source and favorites
+        let source_filtered: Vec<&Tool> = self
+            .all_tools
+            .iter()
+            .filter(|t| {
+                // Filter by source if set
+                if let Some(ref source) = self.source_filter
+                    && format!("{:?}", t.source).to_lowercase() != *source
+                {
+                    return false;
+                }
+                // Filter by favorites if enabled
+                if self.favorites_only && !t.is_favorite {
+                    return false;
+                }
+                true
+            })
+            .collect();
+
+        // Apply fuzzy search filter
+        let mut filtered: Vec<(Tool, i32)> = if self.search_query.is_empty() {
+            source_filtered
+                .into_iter()
+                .map(|t| (t.clone(), 0))
+                .collect()
+        } else {
+            // Fuzzy match against name, description, and category
+            source_filtered
+                .into_iter()
+                .filter_map(|t| {
+                    // Get best score across all fields
+                    let name_score = fuzzy_match(&self.search_query, &t.name);
+                    let desc_score = t
+                        .description
+                        .as_ref()
+                        .and_then(|d| fuzzy_match(&self.search_query, d));
+                    let cat_score = t
+                        .category
+                        .as_ref()
+                        .and_then(|c| fuzzy_match(&self.search_query, c));
+
+                    // Use best score (name matches get priority bonus)
+                    let score = [
+                        name_score.map(|s| s + 10), // Bonus for name match
+                        desc_score,
+                        cat_score,
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .max();
+
+                    score.map(|s| (t.clone(), s))
+                })
+                .collect()
+        };
+
+        // Sort by fuzzy score when searching, otherwise by user preference
+        if !self.search_query.is_empty() {
+            // Sort by score descending (best matches first)
+            filtered.sort_by(|a, b| b.1.cmp(&a.1));
+        } else {
+            // Sort by user preference
+            match self.sort_by {
+                SortBy::Name => filtered.sort_by(|a, b| a.0.name.cmp(&b.0.name)),
+                SortBy::Usage => {
+                    let usage = &self.cache.usage_data;
+                    filtered.sort_by(|a, b| {
+                        let a_usage = usage.get(&a.0.name).map(|u| u.use_count).unwrap_or(0);
+                        let b_usage = usage.get(&b.0.name).map(|u| u.use_count).unwrap_or(0);
+                        b_usage.cmp(&a_usage) // Descending
+                    });
+                }
+                SortBy::Recent => {
+                    filtered.sort_by(|a, b| b.0.updated_at.cmp(&a.0.updated_at));
+                }
+            }
+        }
+
+        self.tools = filtered.into_iter().map(|(t, _)| t).collect();
+
+        // Adjust selection if needed
+        if self.selected_index >= self.tools.len() {
+            self.selected_index = self.tools.len().saturating_sub(1);
+        }
+    }
+
+    /// Cycle through sort options
+    pub fn cycle_sort(&mut self) {
+        self.sort_by = self.sort_by.next();
+        self.apply_filter_and_sort();
+    }
+
+    // ========================================================================
+    // Tool List Navigation
+    // ========================================================================
+
+    /// Move selection down
+    pub fn select_next(&mut self) {
+        if !self.tools.is_empty() {
+            self.selected_index = (self.selected_index + 1).min(self.tools.len() - 1);
+        }
+    }
+
+    /// Move selection up
+    pub fn select_prev(&mut self) {
+        self.selected_index = self.selected_index.saturating_sub(1);
+    }
+
+    /// Move to next match with wrapping (vim n)
+    pub fn search_next(&mut self) {
+        if self.tools.is_empty() {
+            return;
+        }
+        // Move to next item, wrap to start if at end
+        if self.selected_index + 1 >= self.tools.len() {
+            self.selected_index = 0;
+            self.set_status("Search wrapped to top".to_string(), false);
+        } else {
+            self.selected_index += 1;
+        }
+    }
+
+    /// Move to previous match with wrapping (vim N)
+    pub fn search_prev(&mut self) {
+        if self.tools.is_empty() {
+            return;
+        }
+        // Move to previous item, wrap to end if at start
+        if self.selected_index == 0 {
+            self.selected_index = self.tools.len() - 1;
+            self.set_status("Search wrapped to bottom".to_string(), false);
+        } else {
+            self.selected_index -= 1;
+        }
+    }
+
+    /// Enter jump-to-letter mode (vim f)
+    pub fn enter_jump_mode(&mut self) {
+        self.input_mode = InputMode::JumpToLetter;
+    }
+
+    /// Exit jump-to-letter mode
+    pub fn exit_jump_mode(&mut self) {
+        self.input_mode = InputMode::Normal;
+    }
+
+    /// Jump to first tool starting with the given letter
+    pub fn jump_to_letter(&mut self, letter: char) {
+        let letter = letter.to_ascii_lowercase();
+        for (i, tool) in self.tools.iter().enumerate() {
+            if tool.name.to_lowercase().starts_with(letter) {
+                self.selected_index = i;
+                self.set_status(format!("Jumped to '{}'", letter), false);
+                break;
+            }
+        }
+        self.exit_jump_mode();
+    }
+
+    /// Toggle favorite status for the selected tool
+    pub fn toggle_favorite(&mut self, db: &Database) {
+        if let Some(tool) = self.selected_tool() {
+            let name = tool.name.clone();
+            let new_status = !tool.is_favorite;
+
+            match db.set_tool_favorite(&name, new_status) {
+                Ok(true) => {
+                    // Update local state
+                    for t in &mut self.all_tools {
+                        if t.name == name {
+                            t.is_favorite = new_status;
+                            break;
+                        }
+                    }
+                    for t in &mut self.tools {
+                        if t.name == name {
+                            t.is_favorite = new_status;
+                            break;
+                        }
+                    }
+                    let status = if new_status {
+                        "★ Added to favorites"
+                    } else {
+                        "Removed from favorites"
+                    };
+                    self.set_status(format!("{}: {}", name, status), false);
+                }
+                Ok(false) => {
+                    self.set_status(format!("Tool not found: {}", name), true);
+                }
+                Err(e) => {
+                    self.set_status(format!("Failed to update favorite: {}", e), true);
+                }
+            }
+        }
+    }
+
+    /// Move selection to top
+    pub fn select_first(&mut self) {
+        self.selected_index = 0;
+    }
+
+    /// Move selection to bottom
+    pub fn select_last(&mut self) {
+        if !self.tools.is_empty() {
+            self.selected_index = self.tools.len() - 1;
+        }
+    }
+
+    // ========================================================================
+    // Bundle Navigation
+    // ========================================================================
+
+    /// Move bundle selection down
+    pub fn select_next_bundle(&mut self) {
+        self.bundles.next();
+    }
+
+    /// Move bundle selection up
+    pub fn select_prev_bundle(&mut self) {
+        self.bundles.prev();
+    }
+
+    /// Move bundle selection to top
+    pub fn select_first_bundle(&mut self) {
+        self.bundles.first();
+    }
+
+    /// Move bundle selection to bottom
+    pub fn select_last_bundle(&mut self) {
+        self.bundles.last();
+    }
+
+    /// Get the currently selected bundle
+    pub fn selected_bundle(&self) -> Option<&Bundle> {
+        self.bundles.selected_bundle()
+    }
+
+    /// Get the currently selected tool
+    pub fn selected_tool(&self) -> Option<&Tool> {
+        self.tools.get(self.selected_index)
+    }
+
+    /// Get usage for a tool
+    pub fn get_usage(&self, tool_name: &str) -> Option<&crate::db::ToolUsage> {
+        self.cache.usage_data.get(tool_name)
+    }
+
+    /// Get GitHub info for a tool (cached, or fetch from db)
+    pub fn get_github_info(
+        &mut self,
+        tool_name: &str,
+        db: &Database,
+    ) -> Option<&crate::db::GitHubInfo> {
+        if !self.cache.github_cache.contains_key(tool_name)
+            && let Ok(Some(info)) = db.get_github_info(tool_name)
+        {
+            self.cache.github_cache.insert(tool_name.to_string(), info);
+        }
+        self.cache.github_cache.get(tool_name)
+    }
+
+    // ========================================================================
+    // Help and Search
+    // ========================================================================
+
+    /// Toggle help overlay
+    pub fn toggle_help(&mut self) {
+        self.show_help = !self.show_help;
+    }
+
+    /// Enter search mode
+    pub fn enter_search(&mut self) {
+        self.record_filter(); // Record current filter for undo
+        self.input_mode = InputMode::Search;
+        self.search_query.clear();
+    }
+
+    /// Exit search mode
+    pub fn exit_search(&mut self) {
+        self.input_mode = InputMode::Normal;
+    }
+
+    /// Add character to search query and filter
+    pub fn search_push(&mut self, c: char) {
+        self.search_query.push(c);
+        self.apply_filter_and_sort();
+    }
+
+    /// Remove last character from search query and filter
+    pub fn search_pop(&mut self) {
+        self.search_query.pop();
+        self.apply_filter_and_sort();
+    }
+
+    /// Clear search and show all tools
+    pub fn clear_search(&mut self) {
+        if !self.search_query.is_empty() {
+            self.record_filter(); // Record for undo
+            self.search_query.clear();
+            self.apply_filter_and_sort();
+        }
+    }
+
+    // ========================================================================
+    // Details Popup
+    // ========================================================================
+
+    /// Toggle details popup (for narrow terminals)
+    pub fn toggle_details_popup(&mut self) {
+        self.show_details_popup = !self.show_details_popup;
+    }
+
+    /// Close details popup
+    pub fn close_details_popup(&mut self) {
+        self.show_details_popup = false;
+    }
+
+    // ========================================================================
+    // Mouse Support
+    // ========================================================================
+
+    /// Set the list area for mouse interaction
+    pub fn set_list_area(&mut self, x: u16, y: u16, width: u16, height: u16) {
+        self.last_list_area = Some((x, y, width, height));
+    }
+
+    /// Set the tab area for mouse interaction
+    pub fn set_tab_area(&mut self, x: u16, y: u16, width: u16, height: u16) {
+        self.last_tab_area = Some((x, y, width, height));
+    }
+
+    /// Handle mouse click on list item
+    pub fn click_list_item(&mut self, row: u16) {
+        if self.tab == Tab::Bundles {
+            // Handle bundle list clicks
+            let target_index = row as usize; // Bundles don't scroll currently
+            self.bundles.select(target_index);
+        } else if self.tab == Tab::Discover {
+            // Handle discover list clicks
+            let target_index = row as usize;
+            if target_index < self.discover_results.len() {
+                self.discover_selected = target_index;
+            }
+        } else {
+            // Handle tool list clicks
+            let target_index = self.list_offset + row as usize;
+            if target_index < self.tools.len() {
+                self.selected_index = target_index;
+            }
+        }
+    }
+
+    /// Handle mouse click on tab
+    pub fn click_tab(&mut self, x: u16, db: &Database) {
+        if let Some((area_x, _, _, _)) = self.last_tab_area {
+            // Account for block border (1 char on left)
+            let content_start = area_x + 1;
+            let relative_x = x.saturating_sub(content_start) as usize;
+
+            // Tab layout (with padding("", "") set in UI):
+            // Each tab: " title " = title.len() + 2
+            // Divider between tabs: "│" (1 char)
+            let tabs = Tab::all();
+            let mut pos = 0;
+
+            for (i, tab) in tabs.iter().enumerate() {
+                let tab_width = tab.title().len() + 2; // " title "
+
+                if relative_x >= pos && relative_x < pos + tab_width {
+                    self.switch_tab(*tab, db);
+                    return;
+                }
+
+                pos += tab_width;
+
+                // Add divider width (1 char) after each tab except the last
+                if i < tabs.len() - 1 {
+                    pos += 1;
+                }
+            }
+        }
+    }
+
+    /// Check if click is in list area and return relative row
+    pub fn get_list_row(&self, x: u16, y: u16) -> Option<u16> {
+        if let Some((area_x, area_y, width, height)) = self.last_list_area
+            && x >= area_x
+            && x < area_x + width
+            && y >= area_y
+            && y < area_y + height
+        {
+            // Skip header row
+            if y > area_y {
+                return Some(y - area_y - 1);
+            }
+        }
+        None
+    }
+
+    /// Check if click is in tab area
+    pub fn is_in_tab_area(&self, x: u16, y: u16) -> bool {
+        if let Some((area_x, area_y, width, height)) = self.last_tab_area {
+            x >= area_x && x < area_x + width && y >= area_y && y < area_y + height
+        } else {
+            false
+        }
+    }
+
+    // ========================================================================
+    // Status Messages
+    // ========================================================================
+
+    /// Set a status message
+    pub fn set_status(&mut self, text: impl Into<String>, is_error: bool) {
+        self.status_message = Some(StatusMessage {
+            text: text.into(),
+            is_error,
+        });
+    }
+
+    /// Set an error message (convenience wrapper for set_status with is_error=true)
+    pub fn set_error(&mut self, text: impl Into<String>) {
+        self.set_status(text, true);
+    }
+
+    /// Clear status message
+    pub fn clear_status(&mut self) {
+        self.status_message = None;
+    }
+
+    // ========================================================================
+    // Toast Notifications
+    // ========================================================================
+
+    /// Add an info toast notification
+    pub fn notify_info(&mut self, text: impl Into<String>) {
+        self.notifications.push(Notification::info(text));
+    }
+
+    /// Add a warning toast notification
+    pub fn notify_warning(&mut self, text: impl Into<String>) {
+        self.notifications.push(Notification::warning(text));
+    }
+
+    /// Add an error toast notification
+    pub fn notify_error(&mut self, text: impl Into<String>) {
+        self.notifications.push(Notification::error(text));
+    }
+
+    /// Remove expired notifications (call this in main loop tick)
+    pub fn tick_notifications(&mut self) {
+        self.notifications.retain(|n| !n.should_dismiss());
+    }
+
+    /// Dismiss all notifications
+    pub fn clear_notifications(&mut self) {
+        self.notifications.clear();
+    }
+
+    // ========================================================================
+    // Error Modal
+    // ========================================================================
+
+    /// Show a modal error dialog (blocks until dismissed)
+    pub fn show_error_modal(&mut self, title: impl Into<String>, message: impl Into<String>) {
+        self.error_modal = Some(ErrorModal {
+            title: title.into(),
+            message: message.into(),
+        });
+    }
+
+    /// Close the error modal
+    pub fn close_error_modal(&mut self) {
+        self.error_modal = None;
+    }
+
+    /// Check if error modal is showing
+    pub fn has_error_modal(&self) -> bool {
+        self.error_modal.is_some()
+    }
+
+    // ========================================================================
+    // Background Operations
+    // ========================================================================
+
+    /// Schedule a background operation (will be executed by main loop)
+    pub fn schedule_op(&mut self, op: BackgroundOp) {
+        self.background_op = Some(op);
+    }
+
+    /// Check if there's a pending background operation
+    pub fn has_background_op(&self) -> bool {
+        self.background_op.is_some()
+    }
+
+    /// Execute one step of the pending background operation
+    /// Returns true if there are more steps to execute
+    pub fn execute_background_step(&mut self, db: &Database) -> bool {
+        use crate::{
+            check_apt_updates, check_brew_updates, check_cargo_updates, check_npm_updates,
+            check_pip_updates,
+        };
+
+        let Some(op) = self.background_op.take() else {
+            return false;
+        };
+
+        match op {
+            BackgroundOp::CheckUpdates { step } => {
+                let checkers: &[fn() -> anyhow::Result<Vec<Update>>] = &[
+                    check_cargo_updates,
+                    check_pip_updates,
+                    check_npm_updates,
+                    check_apt_updates,
+                    check_brew_updates,
+                ];
+
+                // Initialize on first step
+                if step == 0 {
+                    self.available_updates.clear();
+                    self.updates_loading = true;
+                }
+
+                // Get tracked tool names to filter updates
+                let tracked_tools: HashSet<String> = db
+                    .list_tools(true, None)
+                    .map(|tools| tools.into_iter().map(|t| t.name).collect())
+                    .unwrap_or_default();
+
+                // Update progress for UI
+                self.loading_progress = LoadingProgress {
+                    current_step: step + 1,
+                    total_steps: PACKAGE_MANAGERS.len(),
+                    step_name: PACKAGE_MANAGERS[step].1.to_string(),
+                    found_count: self.available_updates.len(),
+                };
+
+                // Execute this step's checker - only keep updates for tracked tools
+                if let Ok(updates) = checkers[step]() {
+                    for update in updates {
+                        if tracked_tools.contains(&update.name) {
+                            self.available_updates.insert(update.name.clone(), update);
+                        }
+                    }
+                }
+
+                // Check if there are more steps
+                let next_step = step + 1;
+                if next_step < checkers.len() {
+                    // More steps to go
+                    self.background_op = Some(BackgroundOp::CheckUpdates { step: next_step });
+                    true
+                } else {
+                    // All done - finalize
+                    self.updates_checked = true;
+                    self.updates_loading = false;
+                    self.refresh_tools(db);
+
+                    let count = self.available_updates.len();
+                    if count == 0 {
+                        self.set_status("All tools are up to date!", false);
+                    } else {
+                        self.set_status(format!("{} update(s) available", count), false);
+                    }
+                    false
+                }
+            }
+            BackgroundOp::DiscoverSearch {
+                query,
+                step,
+                source_names,
+            } => self.execute_discover_search_step(db, query, step, source_names),
+        }
+    }
+}
