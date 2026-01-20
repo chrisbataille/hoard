@@ -48,8 +48,14 @@ fn handle_key_event(app: &mut App, key: KeyEvent, db: &Database) {
         return;
     }
 
-    // Handle install operation with live output
-    if app.install_operation.is_some() {
+    // Handle install/update operation with live output
+    // Check background_op (not install_operation) since the overlay is shown based on background_op
+    let is_install_op = matches!(
+        &app.background_op,
+        Some(super::app::BackgroundOp::ExecuteInstall { .. })
+            | Some(super::app::BackgroundOp::ExecuteUpdate { .. })
+    );
+    if is_install_op {
         match key.code {
             KeyCode::Esc => {
                 app.cancel_install();
@@ -445,7 +451,7 @@ fn handle_normal_mode(app: &mut App, key: KeyEvent, db: &Database) {
         KeyCode::Char('z') if key.modifiers.contains(KeyModifiers::CONTROL) => app.undo(),
         KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => app.redo(),
 
-        // Refresh (check for updates on Updates tab)
+        // Refresh (r or Ctrl+r - check for updates on Updates tab, refresh tools elsewhere)
         KeyCode::Char('r') => {
             if app.tab == Tab::Updates {
                 // Schedule background operation (main loop will show loading state)
@@ -524,6 +530,26 @@ fn handle_command_mode(app: &mut App, key: KeyEvent, db: &Database) {
 }
 
 fn handle_mouse_event(app: &mut App, mouse: crossterm::event::MouseEvent, _db: &Database) {
+    // Handle install output popup mouse scrolling
+    let is_install_op = matches!(
+        &app.background_op,
+        Some(super::app::BackgroundOp::ExecuteInstall { .. })
+            | Some(super::app::BackgroundOp::ExecuteUpdate { .. })
+    );
+    if is_install_op {
+        match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                app.install_output_scroll = app.install_output_scroll.saturating_sub(3);
+            }
+            MouseEventKind::ScrollDown => {
+                let max_scroll = app.install_output.len().saturating_sub(10);
+                app.install_output_scroll = (app.install_output_scroll + 3).min(max_scroll);
+            }
+            _ => {}
+        }
+        return;
+    }
+
     // Handle README popup mouse scrolling
     if app.has_readme_popup() {
         match mouse.kind {

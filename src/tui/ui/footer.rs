@@ -71,20 +71,64 @@ fn build_normal_mode_footer(app: &App, theme: &Theme) -> Vec<Span<'static>> {
         return build_discover_footer(app, theme);
     }
 
+    // Tab-specific hints
     let mut spans = vec![
         Span::styled(" j/k", Style::default().fg(theme.blue)),
         Span::styled(" nav ", Style::default().fg(theme.subtext0)),
-        Span::styled(" Space", Style::default().fg(theme.blue)),
-        Span::styled(" select ", Style::default().fg(theme.subtext0)),
-        Span::styled(" i", Style::default().fg(theme.green)),
-        Span::styled(" install ", Style::default().fg(theme.subtext0)),
-        Span::styled(" D", Style::default().fg(theme.red)),
-        Span::styled(" uninstall ", Style::default().fg(theme.subtext0)),
-        Span::styled(" u", Style::default().fg(theme.yellow)),
-        Span::styled(" update ", Style::default().fg(theme.subtext0)),
+    ];
+
+    match app.tab {
+        Tab::Installed => {
+            spans.extend([
+                Span::styled(" Space", Style::default().fg(theme.blue)),
+                Span::styled(" select ", Style::default().fg(theme.subtext0)),
+                Span::styled(" D", Style::default().fg(theme.red)),
+                Span::styled(" uninstall ", Style::default().fg(theme.subtext0)),
+                Span::styled(" u", Style::default().fg(theme.yellow)),
+                Span::styled(" update ", Style::default().fg(theme.subtext0)),
+                Span::styled(" Ctrl+r", Style::default().fg(theme.blue)),
+                Span::styled(" refresh ", Style::default().fg(theme.subtext0)),
+            ]);
+        }
+        Tab::Available => {
+            spans.extend([
+                Span::styled(" Space", Style::default().fg(theme.blue)),
+                Span::styled(" select ", Style::default().fg(theme.subtext0)),
+                Span::styled(" i", Style::default().fg(theme.green)),
+                Span::styled(" install ", Style::default().fg(theme.subtext0)),
+                Span::styled(" Ctrl+r", Style::default().fg(theme.blue)),
+                Span::styled(" refresh ", Style::default().fg(theme.subtext0)),
+            ]);
+        }
+        Tab::Updates => {
+            spans.extend([
+                Span::styled(" Space", Style::default().fg(theme.blue)),
+                Span::styled(" select ", Style::default().fg(theme.subtext0)),
+                Span::styled(" u", Style::default().fg(theme.yellow)),
+                Span::styled(" update ", Style::default().fg(theme.subtext0)),
+                Span::styled(" U", Style::default().fg(theme.yellow).bold()),
+                Span::styled(" update all ", Style::default().fg(theme.subtext0)),
+                Span::styled(" Ctrl+r", Style::default().fg(theme.blue)),
+                Span::styled(" check ", Style::default().fg(theme.subtext0)),
+            ]);
+        }
+        Tab::Bundles => {
+            spans.extend([
+                Span::styled(" Space", Style::default().fg(theme.blue)),
+                Span::styled(" select ", Style::default().fg(theme.subtext0)),
+                Span::styled(" i", Style::default().fg(theme.green)),
+                Span::styled(" install ", Style::default().fg(theme.subtext0)),
+                Span::styled(" D", Style::default().fg(theme.red)),
+                Span::styled(" delete ", Style::default().fg(theme.subtext0)),
+            ]);
+        }
+        Tab::Discover => unreachable!(), // Handled above
+    }
+
+    spans.extend([
         Span::styled(" ?", Style::default().fg(theme.blue)),
         Span::styled(" help", Style::default().fg(theme.subtext0)),
-    ];
+    ]);
 
     if app.selection_count() > 0 {
         spans.push(Span::styled(" │ ", Style::default().fg(theme.surface1)));
@@ -129,6 +173,8 @@ fn build_discover_footer(app: &App, theme: &Theme) -> Vec<Span<'static>> {
     }
 
     spans.extend([
+        Span::styled(" i", Style::default().fg(theme.green)),
+        Span::styled(" install ", Style::default().fg(theme.subtext0)),
         Span::styled(" Enter", Style::default().fg(theme.blue)),
         Span::styled(" readme ", Style::default().fg(theme.subtext0)),
         Span::styled(" ?", Style::default().fg(theme.blue)),
