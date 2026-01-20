@@ -203,10 +203,12 @@ impl SearchSource for NpmSearch {
     }
 
     fn search(&self, query: &str, limit: usize) -> Result<Vec<DiscoverResult>> {
+        // Fetch more results to filter out library-only packages
+        let fetch_limit = limit * 3;
         let url = format!(
             "https://registry.npmjs.org/-/v1/search?text={}&size={}",
             urlencoding::encode(query),
-            limit
+            fetch_limit
         );
 
         let mut response = HTTP_AGENT
@@ -219,7 +221,7 @@ impl SearchSource for NpmSearch {
             .context("Failed to parse npm response")?;
 
         let empty_vec = vec![];
-        let packages = response["objects"]
+        let candidates: Vec<_> = response["objects"]
             .as_array()
             .unwrap_or(&empty_vec)
             .iter()
@@ -227,25 +229,69 @@ impl SearchSource for NpmSearch {
                 let pkg = &obj["package"];
                 let name = pkg["name"].as_str()?.to_string();
                 let description = pkg["description"].as_str().map(String::from);
-
-                // Use search score as a proxy for popularity
                 let score = obj["score"]["final"].as_f64().unwrap_or(0.0);
-                let pseudo_stars = (score * 1000.0) as u64;
-
-                Some(
-                    DiscoverResult::new(
-                        name.clone(),
-                        description,
-                        DiscoverSource::Npm,
-                        format!("npm install -g {}", name),
-                    )
-                    .with_stars(pseudo_stars)
-                    .with_url(format!("https://www.npmjs.com/package/{}", name)),
-                )
+                Some((name, description, score))
             })
             .collect();
 
+        // Check each package for CLI binaries (in parallel)
+        let packages: Vec<_> = std::thread::scope(|s| {
+            let handles: Vec<_> = candidates
+                .iter()
+                .map(|(name, description, score)| {
+                    let name = name.clone();
+                    let description = description.clone();
+                    let score = *score;
+                    s.spawn(move || {
+                        if npm_package_has_bin(&name) {
+                            let pseudo_stars = (score * 1000.0) as u64;
+                            Some(
+                                DiscoverResult::new(
+                                    name.clone(),
+                                    description,
+                                    DiscoverSource::Npm,
+                                    format!("npm install -g {}", name),
+                                )
+                                .with_stars(pseudo_stars)
+                                .with_url(format!("https://www.npmjs.com/package/{}", name)),
+                            )
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .collect();
+
+            handles
+                .into_iter()
+                .filter_map(|h| h.join().ok().flatten())
+                .take(limit)
+                .collect()
+        });
+
         Ok(packages)
+    }
+}
+
+/// Check if an npm package has CLI binaries
+fn npm_package_has_bin(name: &str) -> bool {
+    let url = format!("https://registry.npmjs.org/{}", urlencoding::encode(name));
+
+    let Ok(mut response) = HTTP_AGENT.get(&url).call() else {
+        return true; // On error, don't filter out
+    };
+
+    let Ok(data): Result<serde_json::Value, _> = response.body_mut().read_json() else {
+        return true;
+    };
+
+    // Check if package has bin field (can be string or object)
+    let latest_version = data["dist-tags"]["latest"].as_str().unwrap_or("");
+    if let Some(version_data) = data["versions"].get(latest_version) {
+        // bin can be a string (single binary) or object (multiple binaries)
+        version_data.get("bin").is_some()
+    } else {
+        true // Can't determine, include it
     }
 }
 
@@ -266,6 +312,8 @@ impl SearchSource for PyPISearch {
 
     fn search(&self, query: &str, limit: usize) -> Result<Vec<DiscoverResult>> {
         // PyPI doesn't have a proper search API, so we scrape the search page
+        // Fetch more results to filter out library-only packages
+        let fetch_limit = limit * 3;
         let url = format!(
             "https://pypi.org/search/?q={}&o=",
             urlencoding::encode(query)
@@ -281,11 +329,6 @@ impl SearchSource for PyPISearch {
             .context("Failed to read PyPI response")?;
 
         // Parse HTML to extract package names and descriptions
-        // This is a simple regex-based extraction
-        let mut results = Vec::new();
-
-        // Match package names from search results
-        // Pattern: <span class="package-snippet__name">name</span>
         let name_re =
             regex::Regex::new(r#"class="package-snippet__name"[^>]*>([^<]+)</span>"#).unwrap();
         let desc_re =
@@ -293,11 +336,13 @@ impl SearchSource for PyPISearch {
 
         let names: Vec<String> = name_re
             .captures_iter(&response)
+            .take(fetch_limit)
             .map(|c| c[1].trim().to_string())
             .collect();
 
         let descriptions: Vec<Option<String>> = desc_re
             .captures_iter(&response)
+            .take(fetch_limit)
             .map(|c| {
                 let desc = c[1].trim();
                 if desc.is_empty() {
@@ -308,21 +353,119 @@ impl SearchSource for PyPISearch {
             })
             .collect();
 
-        for (i, name) in names.into_iter().take(limit).enumerate() {
-            let description = descriptions.get(i).cloned().flatten();
-            results.push(
-                DiscoverResult::new(
-                    name.clone(),
-                    description,
-                    DiscoverSource::PyPI,
-                    format!("pip install {}", name),
-                )
-                .with_url(format!("https://pypi.org/project/{}/", name)),
-            );
-        }
+        // Pair names with descriptions
+        let candidates: Vec<_> = names
+            .into_iter()
+            .enumerate()
+            .map(|(i, name)| {
+                let description = descriptions.get(i).cloned().flatten();
+                (name, description)
+            })
+            .collect();
+
+        // Check each package for CLI entry points (in parallel)
+        let results: Vec<_> = std::thread::scope(|s| {
+            let handles: Vec<_> = candidates
+                .iter()
+                .map(|(name, description)| {
+                    let name = name.clone();
+                    let description = description.clone();
+                    s.spawn(move || {
+                        if pypi_package_has_cli(&name) {
+                            Some(
+                                DiscoverResult::new(
+                                    name.clone(),
+                                    description,
+                                    DiscoverSource::PyPI,
+                                    format!("pip install {}", name),
+                                )
+                                .with_url(format!("https://pypi.org/project/{}/", name)),
+                            )
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .collect();
+
+            handles
+                .into_iter()
+                .filter_map(|h| h.join().ok().flatten())
+                .take(limit)
+                .collect()
+        });
 
         Ok(results)
     }
+}
+
+/// Check if a PyPI package has CLI entry points (console_scripts)
+fn pypi_package_has_cli(name: &str) -> bool {
+    let url = format!("https://pypi.org/pypi/{}/json", urlencoding::encode(name));
+
+    let Ok(mut response) = HTTP_AGENT.get(&url).call() else {
+        return true; // On error, don't filter out
+    };
+
+    let Ok(data): Result<serde_json::Value, _> = response.body_mut().read_json() else {
+        return true;
+    };
+
+    // Check for console_scripts in info.project_urls or classifiers
+    // Also check if description mentions "CLI", "command-line", etc.
+    let info = &data["info"];
+
+    // Check classifiers for "Environment :: Console"
+    if let Some(classifiers) = info["classifiers"].as_array() {
+        for classifier in classifiers {
+            if let Some(c) = classifier.as_str()
+                && (c.contains("Environment :: Console") || c.contains("Command-line"))
+            {
+                return true;
+            }
+        }
+    }
+
+    // Check if summary/description mentions CLI
+    let summary = info["summary"].as_str().unwrap_or("");
+    let description = info["description"].as_str().unwrap_or("");
+    let combined = format!("{} {}", summary, description).to_lowercase();
+
+    if combined.contains("command-line")
+        || combined.contains("command line")
+        || combined.contains(" cli ")
+        || combined.contains("cli tool")
+        || combined.contains("cli for")
+    {
+        return true;
+    }
+
+    // Check project URLs for potential CLI indicators
+    if let Some(urls) = info["project_urls"].as_object() {
+        for key in urls.keys() {
+            if key.to_lowercase().contains("cli") {
+                return true;
+            }
+        }
+    }
+
+    // Check requires_dist for typical CLI dependencies like click, argparse, typer
+    if let Some(requires) = info["requires_dist"].as_array() {
+        for req in requires {
+            if let Some(r) = req.as_str() {
+                let r_lower = r.to_lowercase();
+                if r_lower.starts_with("click")
+                    || r_lower.starts_with("typer")
+                    || r_lower.starts_with("fire")
+                    || r_lower.starts_with("argcomplete")
+                {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
 }
 
 // ============================================================================
@@ -459,6 +602,9 @@ impl SearchSource for GitHubSearch {
     }
 
     fn search(&self, query: &str, limit: usize) -> Result<Vec<DiscoverResult>> {
+        // Fetch more results to filter out repos without installable packages
+        let fetch_limit = limit * 3;
+
         // Use gh CLI for searching
         let output = Command::new("gh")
             .args([
@@ -466,7 +612,7 @@ impl SearchSource for GitHubSearch {
                 "repos",
                 query,
                 "--limit",
-                &limit.to_string(),
+                &fetch_limit.to_string(),
                 "--json",
                 "name,description,stargazersCount,language,url",
             ])
@@ -485,28 +631,60 @@ impl SearchSource for GitHubSearch {
         let repos: Vec<serde_json::Value> =
             serde_json::from_str(&stdout).context("Failed to parse gh output")?;
 
-        let results: Vec<DiscoverResult> = repos
+        // Extract candidates with language info
+        let candidates: Vec<_> = repos
             .into_iter()
             .filter_map(|repo| {
                 let name = repo["name"].as_str()?.to_string();
                 let description = repo["description"].as_str().map(String::from);
                 let stars = repo["stargazersCount"].as_u64().unwrap_or(0);
-                let language = repo["language"].as_str().unwrap_or("");
+                let language = repo["language"].as_str().unwrap_or("").to_string();
                 let url = repo["url"].as_str().map(String::from);
-
-                // Only include if language maps to an install source
-                let source = Self::language_to_source(language)?;
-                let install_cmd = Self::install_command(&name, language)?;
-
-                let mut result = DiscoverResult::new(name, description, source, install_cmd);
-                result.stars = Some(stars);
-                if let Some(u) = url {
-                    result.url = Some(u);
-                }
-
-                Some(result)
+                Some((name, description, stars, language, url))
             })
             .collect();
+
+        // Cross-check against package registries (in parallel)
+        let results: Vec<_> = std::thread::scope(|s| {
+            let handles: Vec<_> = candidates
+                .iter()
+                .map(|(name, description, stars, language, url)| {
+                    let name = name.clone();
+                    let description = description.clone();
+                    let stars = *stars;
+                    let language = language.clone();
+                    let url = url.clone();
+                    s.spawn(move || {
+                        // Verify package exists and is installable on the registry
+                        let is_installable = match language.to_lowercase().as_str() {
+                            "rust" => crate_has_binaries(&name),
+                            "python" => pypi_package_has_cli(&name),
+                            "javascript" | "typescript" => npm_package_has_bin(&name),
+                            _ => false,
+                        };
+
+                        if is_installable {
+                            let source = GitHubSearch::language_to_source(&language)?;
+                            let install_cmd = GitHubSearch::install_command(&name, &language)?;
+
+                            let mut result =
+                                DiscoverResult::new(name, description, source, install_cmd);
+                            result.stars = Some(stars);
+                            result.url = url;
+                            Some(result)
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .collect();
+
+            handles
+                .into_iter()
+                .filter_map(|h| h.join().ok().flatten())
+                .take(limit)
+                .collect()
+        });
 
         Ok(results)
     }
@@ -547,11 +725,13 @@ impl SearchSource for AiSearch {
         let response = invoke_ai(&prompt)?;
         let discovery = parse_discovery_response(&response)?;
 
-        let results: Vec<DiscoverResult> = discovery
+        // Convert AI recommendations to candidates for validation
+        let candidates: Vec<_> = discovery
             .tools
             .into_iter()
             .map(|tool| {
-                let source = match tool.source.to_lowercase().as_str() {
+                let source_str = tool.source.to_lowercase();
+                let source = match source_str.as_str() {
                     "cargo" | "crates.io" => DiscoverSource::CratesIo,
                     "pip" | "pypi" => DiscoverSource::PyPI,
                     "npm" => DiscoverSource::Npm,
@@ -559,23 +739,62 @@ impl SearchSource for AiSearch {
                     "brew" | "homebrew" => DiscoverSource::Homebrew,
                     _ => DiscoverSource::AI,
                 };
-
-                let mut result = DiscoverResult::new(
+                (
                     tool.name,
-                    Some(tool.description),
+                    tool.description,
                     source,
                     tool.install_cmd,
-                );
-                if let Some(stars) = tool.stars {
-                    result.stars = Some(stars);
-                }
-                if let Some(github) = tool.github {
-                    result.url = Some(github);
-                }
-
-                result
+                    tool.stars,
+                    tool.github,
+                )
             })
             .collect();
+
+        // Validate AI recommendations against package registries (in parallel)
+        let results: Vec<_> = std::thread::scope(|s| {
+            let handles: Vec<_> = candidates
+                .iter()
+                .map(|(name, description, source, install_cmd, stars, github)| {
+                    let name = name.clone();
+                    let description = description.clone();
+                    let source = source.clone();
+                    let install_cmd = install_cmd.clone();
+                    let stars = *stars;
+                    let github = github.clone();
+                    s.spawn(move || {
+                        // Validate the package exists and is installable
+                        let is_valid = match source {
+                            DiscoverSource::CratesIo => crate_has_binaries(&name),
+                            DiscoverSource::PyPI => pypi_package_has_cli(&name),
+                            DiscoverSource::Npm => npm_package_has_bin(&name),
+                            // apt/brew recommendations are assumed valid
+                            DiscoverSource::Apt | DiscoverSource::Homebrew => true,
+                            // Unknown source, can't validate
+                            _ => true,
+                        };
+
+                        if is_valid {
+                            let mut result =
+                                DiscoverResult::new(name, Some(description), source, install_cmd);
+                            if let Some(s) = stars {
+                                result.stars = Some(s);
+                            }
+                            if let Some(g) = github {
+                                result.url = Some(g);
+                            }
+                            Some(result)
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .collect();
+
+            handles
+                .into_iter()
+                .filter_map(|h| h.join().ok().flatten())
+                .collect()
+        });
 
         Ok(results)
     }
