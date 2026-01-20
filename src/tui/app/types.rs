@@ -448,6 +448,7 @@ pub enum InputMode {
     Search,
     Command,      // Vim-style command palette with ':'
     JumpToLetter, // Waiting for letter input to jump to
+    Password,     // Entering sudo password (masked input)
 }
 
 /// Info needed to install/update a tool

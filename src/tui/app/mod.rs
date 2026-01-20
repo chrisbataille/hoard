@@ -143,6 +143,10 @@ pub struct App {
 
     // Async install operation tracking (for cancellation)
     pub install_operation: Option<InstallOperation>,
+
+    // Sudo password input for apt/snap installs
+    pub password_input: String,
+    pub pending_sudo_tasks: Option<(Vec<InstallTask>, bool)>, // (tasks, is_update)
 }
 
 impl App {
@@ -223,6 +227,8 @@ impl App {
             readme_popup: None,
             ai_operation: None,
             install_operation: None,
+            password_input: String::new(),
+            pending_sudo_tasks: None,
         })
     }
 
@@ -965,7 +971,27 @@ impl App {
             // Poll the child process (non-blocking)
             match op.child.try_wait() {
                 Ok(Some(status)) => {
-                    // Process finished - handle result
+                    // Process finished - take ownership to read stderr
+                    let mut finished_op = self.install_operation.take().unwrap();
+
+                    // Read stderr for error details
+                    let stderr_output = finished_op.child.stderr.take().and_then(|mut stderr| {
+                        use std::io::Read;
+                        let mut output = String::new();
+                        stderr.read_to_string(&mut output).ok()?;
+                        if output.trim().is_empty() {
+                            None
+                        } else {
+                            // Limit output length for display
+                            Some(if output.len() > 500 {
+                                format!("{}...", &output[..500])
+                            } else {
+                                output.trim().to_string()
+                            })
+                        }
+                    });
+
+                    // Handle result
                     let result = if status.success() {
                         // Track database sync warnings separately
                         let mut db_warning: Option<String> = None;
@@ -994,20 +1020,22 @@ impl App {
                             error: db_warning,
                         }
                     } else {
+                        // Build error message with stderr output
+                        let exit_code = status
+                            .code()
+                            .map_or("unknown".to_string(), |c| c.to_string());
+                        let error_msg = match stderr_output {
+                            Some(stderr) => format!("Exit code {}: {}", exit_code, stderr),
+                            None => format!("Command failed with exit code: {}", exit_code),
+                        };
                         InstallResult {
                             name: task.name.clone(),
                             success: false,
-                            error: Some(format!(
-                                "Command failed with exit code: {}",
-                                status
-                                    .code()
-                                    .map_or("unknown".to_string(), |c| c.to_string())
-                            )),
+                            error: Some(error_msg),
                         }
                     };
 
                     results.push(result);
-                    self.install_operation = None;
 
                     // Schedule next task
                     let next = current + 1;
@@ -1077,11 +1105,11 @@ impl App {
             match get_safe_install_command(&task.name, &task.source, task.version.as_deref()) {
                 Ok(Some(cmd)) => {
                     // Spawn the command (non-blocking)
-                    // Redirect stdout/stderr to null since TUI owns the terminal
+                    // Redirect stdout to null, but capture stderr for error messages
                     match Command::new(cmd.program)
                         .args(&cmd.args)
                         .stdout(std::process::Stdio::null())
-                        .stderr(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::piped())
                         .spawn()
                     {
                         Ok(child) => {
@@ -1152,6 +1180,161 @@ impl App {
             self.set_status(format!("Cancelled install of {}", op.task_name), true);
         }
         self.background_op = None;
+    }
+
+    /// Check if any task in the list requires sudo
+    pub fn tasks_need_sudo(tasks: &[InstallTask]) -> bool {
+        tasks
+            .iter()
+            .any(|t| t.source == "apt" || t.source == "snap")
+    }
+
+    /// Prompt for sudo password before starting install
+    pub fn prompt_sudo_password(&mut self, tasks: Vec<InstallTask>, is_update: bool) {
+        self.pending_sudo_tasks = Some((tasks, is_update));
+        self.password_input.clear();
+        self.input_mode = InputMode::Password;
+        self.set_status("Enter sudo password to continue", false);
+    }
+
+    /// Start install with sudo password (for apt/snap)
+    pub fn start_sudo_install(
+        &mut self,
+        tasks: Vec<InstallTask>,
+        is_update: bool,
+        password: String,
+        db: &Database,
+    ) {
+        use crate::commands::install::get_safe_install_command;
+        use crate::models::{InstallSource, Tool};
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        let mut results = Vec::new();
+
+        for task in &tasks {
+            // Update progress
+            self.loading_progress = LoadingProgress {
+                current_step: results.len() + 1,
+                total_steps: tasks.len(),
+                step_name: format!(
+                    "{} {}...",
+                    if is_update { "Updating" } else { "Installing" },
+                    task.name
+                ),
+                found_count: results
+                    .iter()
+                    .filter(|r: &&InstallResult| r.success)
+                    .count(),
+            };
+
+            let result =
+                match get_safe_install_command(&task.name, &task.source, task.version.as_deref()) {
+                    Ok(Some(cmd)) => {
+                        // For sudo commands, use sudo -S to read password from stdin
+                        let child = Command::new("sudo")
+                            .arg("-S") // Read password from stdin
+                            .arg("--")
+                            .arg(cmd.program)
+                            .args(&cmd.args)
+                            .stdin(Stdio::piped())
+                            .stdout(Stdio::null())
+                            .stderr(Stdio::piped())
+                            .spawn();
+
+                        match child {
+                            Ok(mut child) => {
+                                // Write password to stdin
+                                if let Some(mut stdin) = child.stdin.take() {
+                                    let _ = writeln!(stdin, "{}", password);
+                                }
+
+                                // Wait for completion
+                                match child.wait_with_output() {
+                                    Ok(output) => {
+                                        if output.status.success() {
+                                            // Update database
+                                            let mut db_warning: Option<String> = None;
+                                            let existing =
+                                                db.get_tool_by_name(&task.name).ok().flatten();
+                                            let tool = if let Some(mut t) = existing {
+                                                t.is_installed = true;
+                                                t
+                                            } else {
+                                                Tool::new(&task.name)
+                                                    .with_source(InstallSource::from(
+                                                        task.source.as_str(),
+                                                    ))
+                                                    .installed()
+                                            };
+                                            if let Err(e) = db.upsert_tool(&tool) {
+                                                db_warning =
+                                                    Some(format!("DB sync failed: {:#}", e));
+                                            }
+                                            InstallResult {
+                                                name: task.name.clone(),
+                                                success: true,
+                                                error: db_warning,
+                                            }
+                                        } else {
+                                            let stderr = String::from_utf8_lossy(&output.stderr);
+                                            let stderr_trimmed = stderr.trim();
+                                            // Filter out sudo password prompt from error
+                                            let filtered_stderr: String = stderr_trimmed
+                                                .lines()
+                                                .filter(|line| {
+                                                    !line.contains("[sudo]")
+                                                        && !line.contains("password for")
+                                                })
+                                                .collect::<Vec<_>>()
+                                                .join("\n");
+                                            let error_msg = if filtered_stderr.is_empty() {
+                                                format!(
+                                                    "Exit code: {}",
+                                                    output.status.code().unwrap_or(-1)
+                                                )
+                                            } else if filtered_stderr.len() > 500 {
+                                                format!("{}...", &filtered_stderr[..500])
+                                            } else {
+                                                filtered_stderr
+                                            };
+                                            InstallResult {
+                                                name: task.name.clone(),
+                                                success: false,
+                                                error: Some(error_msg),
+                                            }
+                                        }
+                                    }
+                                    Err(e) => InstallResult {
+                                        name: task.name.clone(),
+                                        success: false,
+                                        error: Some(format!("Failed to wait for command: {:#}", e)),
+                                    },
+                                }
+                            }
+                            Err(e) => InstallResult {
+                                name: task.name.clone(),
+                                success: false,
+                                error: Some(format!("Failed to spawn command: {:#}", e)),
+                            },
+                        }
+                    }
+                    Ok(None) => InstallResult {
+                        name: task.name.clone(),
+                        success: false,
+                        error: Some(format!("Unknown install source: {}", task.source)),
+                    },
+                    Err(e) => InstallResult {
+                        name: task.name.clone(),
+                        success: false,
+                        error: Some(format!("Invalid package name: {:#}", e)),
+                    },
+                };
+
+            results.push(result);
+        }
+
+        self.finalize_install(&results, db, is_update);
     }
 
     /// Finalize install/update operation and show results

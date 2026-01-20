@@ -140,6 +140,34 @@ fn handle_key_event(app: &mut App, key: KeyEvent, db: &Database) {
         InputMode::Search => handle_search_mode(app, key, db),
         InputMode::Command => handle_command_mode(app, key, db),
         InputMode::JumpToLetter => handle_jump_mode(app, key),
+        InputMode::Password => handle_password_mode(app, key, db),
+    }
+}
+
+fn handle_password_mode(app: &mut App, key: KeyEvent, db: &Database) {
+    match key.code {
+        KeyCode::Esc => {
+            // Cancel password entry
+            app.password_input.clear();
+            app.pending_sudo_tasks = None;
+            app.input_mode = InputMode::Normal;
+            app.set_status("Install cancelled", false);
+        }
+        KeyCode::Enter => {
+            // Submit password and start install
+            if let Some((tasks, is_update)) = app.pending_sudo_tasks.take() {
+                let password = std::mem::take(&mut app.password_input);
+                app.input_mode = InputMode::Normal;
+                app.start_sudo_install(tasks, is_update, password, db);
+            }
+        }
+        KeyCode::Backspace => {
+            app.password_input.pop();
+        }
+        KeyCode::Char(c) => {
+            app.password_input.push(c);
+        }
+        _ => {}
     }
 }
 
@@ -638,24 +666,35 @@ fn handle_config_menu_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) 
 
 /// Execute a confirmed action
 fn execute_action(app: &mut App, action: PendingAction, db: &Database) {
-    use super::app::BackgroundOp;
+    use super::app::{App as AppType, BackgroundOp};
 
     match action {
         PendingAction::Install(tasks) => {
-            // Schedule background install operation
-            app.schedule_op(BackgroundOp::ExecuteInstall {
-                tasks,
-                current: 0,
-                results: Vec::new(),
-            });
+            // Check if any task needs sudo (apt/snap)
+            if AppType::tasks_need_sudo(&tasks) {
+                app.prompt_sudo_password(tasks, false);
+            } else {
+                // Schedule background install operation
+                app.schedule_op(BackgroundOp::ExecuteInstall {
+                    tasks,
+                    current: 0,
+                    results: Vec::new(),
+                });
+            }
         }
         PendingAction::DiscoverInstall(task) => {
-            // Schedule background install operation (single task)
-            app.schedule_op(BackgroundOp::ExecuteInstall {
-                tasks: vec![task],
-                current: 0,
-                results: Vec::new(),
-            });
+            let tasks = vec![task];
+            // Check if task needs sudo (apt/snap)
+            if AppType::tasks_need_sudo(&tasks) {
+                app.prompt_sudo_password(tasks, false);
+            } else {
+                // Schedule background install operation
+                app.schedule_op(BackgroundOp::ExecuteInstall {
+                    tasks,
+                    current: 0,
+                    results: Vec::new(),
+                });
+            }
         }
         PendingAction::Uninstall(tools) => {
             // Uninstall still uses CLI for now (requires confirmation per tool)
@@ -678,12 +717,17 @@ fn execute_action(app: &mut App, action: PendingAction, db: &Database) {
             app.refresh_tools(db);
         }
         PendingAction::Update(tasks) => {
-            // Schedule background update operation
-            app.schedule_op(BackgroundOp::ExecuteUpdate {
-                tasks,
-                current: 0,
-                results: Vec::new(),
-            });
+            // Check if any task needs sudo (apt/snap)
+            if AppType::tasks_need_sudo(&tasks) {
+                app.prompt_sudo_password(tasks, true);
+            } else {
+                // Schedule background update operation
+                app.schedule_op(BackgroundOp::ExecuteUpdate {
+                    tasks,
+                    current: 0,
+                    results: Vec::new(),
+                });
+            }
         }
     }
 }

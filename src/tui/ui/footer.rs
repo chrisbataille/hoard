@@ -269,6 +269,21 @@ fn build_jump_mode_footer(theme: &Theme) -> Vec<Span<'static>> {
     ]
 }
 
+/// Build footer content for Password mode (sudo)
+fn build_password_mode_footer(app: &App, theme: &Theme) -> Vec<Span<'static>> {
+    // Show masked password input
+    let masked = "*".repeat(app.password_input.len());
+    vec![
+        Span::styled(" 🔒 Password: ", Style::default().fg(theme.yellow).bold()),
+        Span::styled(masked, Style::default().fg(theme.text)),
+        Span::styled("█", Style::default().fg(theme.blue)), // Cursor
+        Span::styled("  Enter", Style::default().fg(theme.blue)),
+        Span::styled(" confirm  ", Style::default().fg(theme.subtext0)),
+        Span::styled("Esc", Style::default().fg(theme.blue)),
+        Span::styled(" cancel", Style::default().fg(theme.subtext0)),
+    ]
+}
+
 /// Render the footer bar
 pub fn render_footer(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let (right_status, right_width) = build_footer_right_status(app, theme);
@@ -306,6 +321,7 @@ pub fn render_footer(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         InputMode::Search => build_search_mode_footer(app, theme),
         InputMode::Command => build_command_mode_footer(app, theme),
         InputMode::JumpToLetter => build_jump_mode_footer(theme),
+        InputMode::Password => build_password_mode_footer(app, theme),
     };
 
     let chunks = Layout::default()
