@@ -48,10 +48,38 @@ fn handle_key_event(app: &mut App, key: KeyEvent, db: &Database) {
         return;
     }
 
-    // Handle install operation cancellation (Escape during install)
-    if app.install_operation.is_some() && matches!(key.code, KeyCode::Esc) {
-        app.cancel_install();
-        return;
+    // Handle install operation with live output
+    if app.install_operation.is_some() {
+        match key.code {
+            KeyCode::Esc => {
+                app.cancel_install();
+                return;
+            }
+            // Scroll output up
+            KeyCode::Char('k') | KeyCode::Up => {
+                app.install_output_scroll = app.install_output_scroll.saturating_sub(1);
+                return;
+            }
+            // Scroll output down
+            KeyCode::Char('j') | KeyCode::Down => {
+                let max_scroll = app.install_output.len().saturating_sub(10); // approx visible
+                if app.install_output_scroll < max_scroll {
+                    app.install_output_scroll += 1;
+                }
+                return;
+            }
+            // Page up/down
+            KeyCode::PageUp => {
+                app.install_output_scroll = app.install_output_scroll.saturating_sub(10);
+                return;
+            }
+            KeyCode::PageDown => {
+                let max_scroll = app.install_output.len().saturating_sub(10);
+                app.install_output_scroll = (app.install_output_scroll + 10).min(max_scroll);
+                return;
+            }
+            _ => return, // Ignore other keys during install
+        }
     }
 
     // Handle README popup

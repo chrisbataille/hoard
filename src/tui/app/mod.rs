@@ -38,8 +38,8 @@ pub use traits::SelectableList;
 pub use types::{
     ActionHistory, BackgroundOp, ConfigMenuState, ConfigSection, DiscoverResult, DiscoverSortBy,
     DiscoverSource, ErrorModal, InputMode, InstallOption, InstallResult, InstallTask,
-    LoadingProgress, Notification, NotificationLevel, PACKAGE_MANAGERS, PendingAction, ReadmePopup,
-    SortBy, StatusMessage, Tab, config_menu_layout,
+    LoadingProgress, Notification, NotificationLevel, OutputLine, OutputLineType, PACKAGE_MANAGERS,
+    PendingAction, ReadmePopup, SortBy, StatusMessage, Tab, config_menu_layout,
 };
 
 /// Tracks an async AI operation running in a background thread
@@ -54,6 +54,8 @@ pub struct InstallOperation {
     pub task_name: String,
     pub child: std::process::Child,
     pub start_time: std::time::Instant,
+    /// Receiver for stdout/stderr lines from reader threads
+    pub output_receiver: std::sync::mpsc::Receiver<OutputLine>,
 }
 
 /// Main application state
@@ -147,6 +149,10 @@ pub struct App {
     // Sudo password input for apt/snap installs
     pub password_input: String,
     pub pending_sudo_tasks: Option<(Vec<InstallTask>, bool)>, // (tasks, is_update)
+
+    // Live output from install/update commands
+    pub install_output: Vec<OutputLine>,
+    pub install_output_scroll: usize,
 }
 
 impl App {
@@ -229,6 +235,8 @@ impl App {
             install_operation: None,
             password_input: String::new(),
             pending_sudo_tasks: None,
+            install_output: Vec::new(),
+            install_output_scroll: 0,
         })
     }
 
@@ -968,28 +976,48 @@ impl App {
 
         // Check if we have a running install operation
         if let Some(ref mut op) = self.install_operation {
+            // Poll for new output lines (non-blocking)
+            use std::sync::mpsc::TryRecvError;
+            loop {
+                match op.output_receiver.try_recv() {
+                    Ok(line) => {
+                        self.install_output.push(line);
+                        // Auto-scroll to bottom if near bottom already
+                        let visible_lines = 10; // Approximate visible lines in overlay
+                        if self.install_output.len() > visible_lines
+                            && self.install_output_scroll
+                                >= self.install_output.len().saturating_sub(visible_lines + 2)
+                        {
+                            self.install_output_scroll =
+                                self.install_output.len().saturating_sub(visible_lines);
+                        }
+                    }
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => break,
+                }
+            }
+
             // Poll the child process (non-blocking)
             match op.child.try_wait() {
                 Ok(Some(status)) => {
-                    // Process finished - take ownership to read stderr
-                    let mut finished_op = self.install_operation.take().unwrap();
+                    // Process finished - take ownership
+                    let _finished_op = self.install_operation.take().unwrap();
 
-                    // Read stderr for error details
-                    let stderr_output = finished_op.child.stderr.take().and_then(|mut stderr| {
-                        use std::io::Read;
-                        let mut output = String::new();
-                        stderr.read_to_string(&mut output).ok()?;
-                        if output.trim().is_empty() {
-                            None
-                        } else {
-                            // Limit output length for display
-                            Some(if output.len() > 500 {
-                                format!("{}...", &output[..500])
-                            } else {
-                                output.trim().to_string()
-                            })
-                        }
-                    });
+                    // Collect stderr lines from output buffer for error message
+                    let stderr_output: String = self
+                        .install_output
+                        .iter()
+                        .filter(|l| l.line_type == OutputLineType::Stderr)
+                        .map(|l| l.content.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let stderr_output = if stderr_output.is_empty() {
+                        None
+                    } else if stderr_output.len() > 500 {
+                        Some(format!("{}...", &stderr_output[..500]))
+                    } else {
+                        Some(stderr_output)
+                    };
 
                     // Handle result
                     let result = if status.success() {
@@ -1101,22 +1129,66 @@ impl App {
         }
 
         // No running operation - start a new one
+        // Clear output buffer for new task
+        self.install_output.clear();
+        self.install_output_scroll = 0;
+
+        // Add status message for starting
+        self.install_output.push(OutputLine {
+            line_type: OutputLineType::Status,
+            content: format!("$ {}", task.display_command),
+        });
+
         let result =
             match get_safe_install_command(&task.name, &task.source, task.version.as_deref()) {
                 Ok(Some(cmd)) => {
-                    // Spawn the command (non-blocking)
-                    // Redirect stdout to null, but capture stderr for error messages
+                    use std::io::BufRead;
+                    use std::sync::mpsc;
+
+                    // Spawn the command with both stdout and stderr piped
                     match Command::new(cmd.program)
                         .args(&cmd.args)
-                        .stdout(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::piped())
                         .stderr(std::process::Stdio::piped())
                         .spawn()
                     {
-                        Ok(child) => {
+                        Ok(mut child) => {
+                            // Create channel for output lines
+                            let (tx, rx) = mpsc::channel::<OutputLine>();
+
+                            // Spawn thread to read stdout
+                            if let Some(stdout) = child.stdout.take() {
+                                let tx_stdout = tx.clone();
+                                std::thread::spawn(move || {
+                                    let reader = std::io::BufReader::new(stdout);
+                                    for line in reader.lines().map_while(Result::ok) {
+                                        let _ = tx_stdout.send(OutputLine {
+                                            line_type: OutputLineType::Stdout,
+                                            content: line,
+                                        });
+                                    }
+                                });
+                            }
+
+                            // Spawn thread to read stderr
+                            if let Some(stderr) = child.stderr.take() {
+                                let tx_stderr = tx;
+                                std::thread::spawn(move || {
+                                    let reader = std::io::BufReader::new(stderr);
+                                    for line in reader.lines().map_while(Result::ok) {
+                                        let _ = tx_stderr.send(OutputLine {
+                                            line_type: OutputLineType::Stderr,
+                                            content: line,
+                                        });
+                                    }
+                                });
+                            }
+
                             self.install_operation = Some(InstallOperation {
                                 task_name: task.name.clone(),
                                 child,
                                 start_time: std::time::Instant::now(),
+                                output_receiver: rx,
                             });
 
                             // Keep polling this task

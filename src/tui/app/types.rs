@@ -468,6 +468,21 @@ pub struct InstallResult {
     pub error: Option<String>,
 }
 
+/// Type of output line from install command
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputLineType {
+    Stdout,
+    Stderr,
+    Status, // Internal status messages (e.g., "Starting...")
+}
+
+/// A line of output from an install/update command
+#[derive(Debug, Clone)]
+pub struct OutputLine {
+    pub line_type: OutputLineType,
+    pub content: String,
+}
+
 /// Background operation that needs loading indicator
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BackgroundOp {
