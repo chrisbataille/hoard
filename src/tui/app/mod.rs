@@ -834,6 +834,14 @@ impl App {
 
     /// Schedule a background operation (will be executed by main loop)
     pub fn schedule_op(&mut self, op: BackgroundOp) {
+        // Clear previous install output when starting a new install/update
+        if matches!(
+            op,
+            BackgroundOp::ExecuteInstall { .. } | BackgroundOp::ExecuteUpdate { .. }
+        ) {
+            self.install_output.clear();
+            self.install_output_scroll = 0;
+        }
         self.background_op = Some(op);
     }
 
