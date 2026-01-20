@@ -126,7 +126,9 @@ impl SearchSource for CratesIoSearch {
                 let name = c["name"].as_str()?.to_string();
                 let description = c["description"].as_str().map(String::from);
                 let downloads = c["downloads"].as_u64().unwrap_or(0);
-                Some((name, description, downloads))
+                // Get repository URL (usually GitHub)
+                let repository = c["repository"].as_str().map(String::from);
+                Some((name, description, downloads, repository))
             })
             .collect();
 
@@ -134,22 +136,28 @@ impl SearchSource for CratesIoSearch {
         let crates: Vec<_> = std::thread::scope(|s| {
             let handles: Vec<_> = candidates
                 .iter()
-                .map(|(name, description, downloads)| {
+                .map(|(name, description, downloads, repository)| {
                     let name = name.clone();
                     let description = description.clone();
                     let downloads = *downloads;
+                    let repository = repository.clone();
                     s.spawn(move || {
                         if crate_has_binaries(&name) {
-                            Some(
-                                DiscoverResult::new(
-                                    name.clone(),
-                                    description,
-                                    DiscoverSource::CratesIo,
-                                    format!("cargo install {}", name),
-                                )
-                                .with_stars(downloads / 1000)
-                                .with_url(format!("https://crates.io/crates/{}", name)),
+                            let mut result = DiscoverResult::new(
+                                name.clone(),
+                                description,
+                                DiscoverSource::CratesIo,
+                                format!("cargo install {}", name),
                             )
+                            .with_stars(downloads / 1000);
+                            // Use repository URL if available (usually GitHub), otherwise crates.io
+                            if let Some(repo) = repository {
+                                result = result.with_url(repo);
+                            } else {
+                                result =
+                                    result.with_url(format!("https://crates.io/crates/{}", name));
+                            }
+                            Some(result)
                         } else {
                             None
                         }
@@ -874,6 +882,12 @@ pub fn deduplicate_results(mut results: Vec<DiscoverResult>) -> Vec<DiscoverResu
 
             let mut primary = sorted.remove(0);
 
+            // Helper to check if URL is a GitHub URL
+            let is_github_url = |url: &Option<String>| -> bool {
+                url.as_ref()
+                    .is_some_and(|u| u.contains("github.com") || u.contains("github.io"))
+            };
+
             // Merge install options from other sources
             for other in sorted {
                 for opt in other.install_options {
@@ -886,13 +900,13 @@ pub fn deduplicate_results(mut results: Vec<DiscoverResult>) -> Vec<DiscoverResu
                         primary.install_options.push(opt);
                     }
                 }
-                // Prefer GitHub description if available
-                if other.source == DiscoverSource::GitHub && other.description.is_some() {
-                    primary.description = other.description;
-                }
-                // Prefer GitHub URL
-                if other.source == DiscoverSource::GitHub && other.url.is_some() {
-                    primary.url = other.url;
+                // Prefer GitHub URL from any source over non-GitHub URLs
+                if is_github_url(&other.url) && !is_github_url(&primary.url) {
+                    primary.url = other.url.clone();
+                    // Also take description from the source with GitHub URL
+                    if other.description.is_some() {
+                        primary.description = other.description;
+                    }
                 }
             }
 

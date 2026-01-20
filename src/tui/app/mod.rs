@@ -1006,7 +1006,10 @@ impl App {
                 let visible_lines = 10;
                 // Only auto-scroll if we're near the bottom (within 2 lines)
                 if self.install_output_scroll
-                    >= self.install_output.len().saturating_sub(visible_lines + lines_read + 2)
+                    >= self
+                        .install_output
+                        .len()
+                        .saturating_sub(visible_lines + lines_read + 2)
                 {
                     self.install_output_scroll =
                         self.install_output.len().saturating_sub(visible_lines);
@@ -1019,41 +1022,10 @@ impl App {
                     // Process finished - take ownership
                     let finished_op = self.install_operation.take().unwrap();
 
-                    // DEBUG: Log to file
-                    use std::io::Write;
-                    let mut log = std::fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open("/tmp/hoards_debug.log")
-                        .ok();
-                    if let Some(ref mut f) = log {
-                        let _ = writeln!(f, "\n=== Process finished: {} ===", task.name);
-                        let _ = writeln!(f, "Exit status: {:?}", status);
-                        let _ = writeln!(f, "Output lines before drain: {}", self.install_output.len());
-                    }
-
                     // Drain any remaining output from the channel
                     // (reader threads might still be sending after process exit)
-                    let mut drained = 0;
-                    loop {
-                        match finished_op.output_receiver.try_recv() {
-                            Ok(line) => {
-                                if let Some(ref mut f) = log {
-                                    let _ = writeln!(f, "  Drained: [{:?}] {}", line.line_type, &line.content);
-                                }
-                                self.install_output.push(line);
-                                drained += 1;
-                            }
-                            Err(_) => break,
-                        }
-                    }
-                    if let Some(ref mut f) = log {
-                        let _ = writeln!(f, "Drained {} additional lines", drained);
-                        let _ = writeln!(f, "Total output lines: {}", self.install_output.len());
-                        let _ = writeln!(f, "--- All output ---");
-                        for (i, line) in self.install_output.iter().enumerate() {
-                            let _ = writeln!(f, "  {}: [{:?}] {}", i, line.line_type, &line.content);
-                        }
+                    while let Ok(line) = finished_op.output_receiver.try_recv() {
+                        self.install_output.push(line);
                     }
 
                     // Collect stderr lines - prioritize actual error lines
@@ -1106,23 +1078,17 @@ impl App {
                         String::new()
                     };
 
-                    if let Some(ref mut f) = log {
-                        let _ = writeln!(f, "--- Collected stderr ({} chars) ---", stderr_output.len());
-                        let _ = writeln!(f, "{}", &stderr_output);
-                    }
-
                     let stderr_output = if stderr_output.is_empty() {
                         None
                     } else if stderr_output.len() > 1000 {
                         // Truncate from beginning if still too long
-                        Some(format!("...{}", &stderr_output[stderr_output.len() - 1000..]))
+                        Some(format!(
+                            "...{}",
+                            &stderr_output[stderr_output.len() - 1000..]
+                        ))
                     } else {
                         Some(stderr_output)
                     };
-
-                    if let Some(ref mut f) = log {
-                        let _ = writeln!(f, "Final stderr_output: {:?}", stderr_output);
-                    }
 
                     // Handle result
                     let result = if status.success() {
@@ -1135,16 +1101,47 @@ impl App {
                         let tool = if let Some(mut t) = existing {
                             // Update existing tool
                             t.is_installed = true;
+                            // Add description from Discover if not already set
+                            if t.description.is_none() {
+                                t.description = task.description.clone();
+                            }
                             t
                         } else {
                             // Create new tool (for discover installs)
-                            Tool::new(&task.name)
+                            let mut new_tool = Tool::new(&task.name)
                                 .with_source(InstallSource::from(task.source.as_str()))
-                                .installed()
+                                .installed();
+                            // Add description from Discover metadata
+                            if let Some(ref desc) = task.description {
+                                new_tool = new_tool.with_description(desc);
+                            }
+                            new_tool
                         };
 
                         if let Err(e) = db.upsert_tool(&tool) {
                             db_warning = Some(format!("DB sync failed: {:#}", e));
+                        }
+
+                        // Sync GitHub info if we have stars and a GitHub URL
+                        if let (Some(stars), Some(url)) = (task.stars, &task.url)
+                            && let Ok((owner, repo)) = crate::ai::parse_github_url(url)
+                        {
+                            let gh_info = crate::db::GitHubInfoInput {
+                                repo_owner: &owner,
+                                repo_name: &repo,
+                                description: task.description.as_deref(),
+                                stars: stars as i64,
+                                language: None,
+                                homepage: None,
+                            };
+                            if let Err(e) = db.set_github_info(&task.name, gh_info) {
+                                // Append to warning if exists, or create new
+                                let msg = format!("GitHub sync failed: {:#}", e);
+                                db_warning = Some(match db_warning {
+                                    Some(w) => format!("{}; {}", w, msg),
+                                    None => msg,
+                                });
+                            }
                         }
 
                         InstallResult {
@@ -1162,20 +1159,12 @@ impl App {
                             None => format!("Command failed with exit code: {}", exit_code),
                         };
 
-                        if let Some(ref mut f) = log {
-                            let _ = writeln!(f, "FAILURE - exit_code: {}, error_msg: {}", exit_code, &error_msg);
-                        }
-
                         InstallResult {
                             name: task.name.clone(),
                             success: false,
                             error: Some(error_msg),
                         }
                     };
-
-                    if let Some(ref mut f) = log {
-                        let _ = writeln!(f, "InstallResult: success={}, error={:?}", result.success, result.error);
-                    }
 
                     // Add status line to output
                     self.install_output.push(OutputLine {
@@ -1459,18 +1448,54 @@ impl App {
                                                 db.get_tool_by_name(&task.name).ok().flatten();
                                             let tool = if let Some(mut t) = existing {
                                                 t.is_installed = true;
+                                                // Add description from Discover if not already set
+                                                if t.description.is_none() {
+                                                    t.description = task.description.clone();
+                                                }
                                                 t
                                             } else {
-                                                Tool::new(&task.name)
+                                                let mut new_tool = Tool::new(&task.name)
                                                     .with_source(InstallSource::from(
                                                         task.source.as_str(),
                                                     ))
-                                                    .installed()
+                                                    .installed();
+                                                // Add description from Discover metadata
+                                                if let Some(ref desc) = task.description {
+                                                    new_tool = new_tool.with_description(desc);
+                                                }
+                                                new_tool
                                             };
                                             if let Err(e) = db.upsert_tool(&tool) {
                                                 db_warning =
                                                     Some(format!("DB sync failed: {:#}", e));
                                             }
+
+                                            // Sync GitHub info if we have stars and a GitHub URL
+                                            if let (Some(stars), Some(url)) =
+                                                (task.stars, &task.url)
+                                                && let Ok((owner, repo)) =
+                                                    crate::ai::parse_github_url(url)
+                                            {
+                                                let gh_info = crate::db::GitHubInfoInput {
+                                                    repo_owner: &owner,
+                                                    repo_name: &repo,
+                                                    description: task.description.as_deref(),
+                                                    stars: stars as i64,
+                                                    language: None,
+                                                    homepage: None,
+                                                };
+                                                if let Err(e) =
+                                                    db.set_github_info(&task.name, gh_info)
+                                                {
+                                                    let msg =
+                                                        format!("GitHub sync failed: {:#}", e);
+                                                    db_warning = Some(match db_warning {
+                                                        Some(w) => format!("{}; {}", w, msg),
+                                                        None => msg,
+                                                    });
+                                                }
+                                            }
+
                                             InstallResult {
                                                 name: task.name.clone(),
                                                 success: true,

@@ -73,7 +73,11 @@ fn render_discover_search_controls(frame: &mut Frame, app: &App, theme: &Theme, 
             // "Fn" (2-3 chars) + "[x]" (3) + icon (2 for emoji, 1 for nerd font) + space (1)
             let fkey_width = if idx + 1 >= 10 { 3 } else { 2 }; // F1 vs F10
             // Emojis are 2 cells wide, nerd font icons are 1 cell
-            let icon_width = if icon.chars().any(|c| c > '\u{1000}') { 2 } else { 1 };
+            let icon_width = if icon.chars().any(|c| c > '\u{1000}') {
+                2
+            } else {
+                1
+            };
             (fkey_width + 3 + icon_width + 1) as u16
         })
         .sum::<u16>()
@@ -351,14 +355,28 @@ pub fn render_discover_list(frame: &mut Frame, app: &mut App, theme: &Theme, are
         .discover_results
         .iter()
         .map(|result| {
-            let icon = result.source.icon();
+            // Collect unique source icons from all install options
+            let mut icons: Vec<&str> = result
+                .install_options
+                .iter()
+                .map(|opt| opt.source.icon())
+                .collect();
+            // Remove duplicates while preserving order
+            let mut seen = std::collections::HashSet::new();
+            icons.retain(|icon| seen.insert(*icon));
+            // Fall back to primary source if no install options
+            if icons.is_empty() {
+                icons.push(result.source.icon());
+            }
+            let icons_str = icons.join(" ");
+
             let stars_str = result
                 .stars
                 .map(|s| format!(" ★ {}", format_stars(s as i64)))
                 .unwrap_or_default();
 
             let content = Line::from(vec![
-                Span::styled(format!("{} ", icon), Style::default()),
+                Span::styled(format!("{} ", icons_str), Style::default()),
                 Span::styled(&result.name, Style::default().fg(theme.text)),
                 Span::styled(stars_str, Style::default().fg(theme.yellow)),
             ]);

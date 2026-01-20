@@ -25,17 +25,43 @@ pub fn handle_events(app: &mut App, db: &Database) -> Result<()> {
 fn handle_key_event(app: &mut App, key: KeyEvent, db: &Database) {
     // Handle pending action confirmation first
     if app.has_pending_action() {
-        match key.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') => {
-                if let Some(action) = app.confirm_action() {
-                    // Execute the action
-                    execute_action(app, action, db);
+        // Check if this is a source selection dialog
+        let is_source_selection = matches!(
+            &app.pending_action,
+            Some(PendingAction::DiscoverSelectSource(..))
+        );
+
+        if is_source_selection {
+            // Source selection mode: j/k to navigate, Enter to confirm, Esc to cancel
+            match key.code {
+                KeyCode::Char('j') | KeyCode::Down => {
+                    app.navigate_source_selection(1);
                 }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    app.navigate_source_selection(-1);
+                }
+                KeyCode::Enter => {
+                    app.confirm_source_selection();
+                }
+                KeyCode::Esc => {
+                    app.cancel_action();
+                }
+                _ => {} // Ignore other keys during selection
             }
-            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                app.cancel_action();
+        } else {
+            // Normal confirmation: y to confirm, n/Esc to cancel
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    if let Some(action) = app.confirm_action() {
+                        // Execute the action
+                        execute_action(app, action, db);
+                    }
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                    app.cancel_action();
+                }
+                _ => {} // Ignore other keys during confirmation
             }
-            _ => {} // Ignore other keys during confirmation
         }
         return;
     }
@@ -788,6 +814,10 @@ fn execute_action(app: &mut App, action: PendingAction, db: &Database) {
                     results: Vec::new(),
                 });
             }
+        }
+        PendingAction::DiscoverSelectSource(..) => {
+            // Source selection is handled by key events (j/k to navigate, Enter to confirm)
+            // This should not be called directly
         }
     }
 }

@@ -8,7 +8,9 @@ use crate::db::Database;
 use crate::models::Tool;
 
 use super::App;
-use super::types::{DiscoverSource, InstallTask, PendingAction, UndoableAction};
+use super::types::{
+    DiscoverMetadata, DiscoverSource, InstallOption, InstallTask, PendingAction, UndoableAction,
+};
 
 impl App {
     // ========================================================================
@@ -160,9 +162,21 @@ impl App {
     // Install/Uninstall/Update Actions
     // ========================================================================
 
-    /// Build InstallTask from a Tool with optional version
+    /// Build InstallTask from a Tool with optional version and metadata
     /// Always regenerates display_command for consistency and security
     fn build_install_task(name: &str, source: &str, version: Option<&str>) -> Option<InstallTask> {
+        Self::build_install_task_with_metadata(name, source, version, None, None, None)
+    }
+
+    /// Build InstallTask with optional Discover metadata (description, stars, url)
+    fn build_install_task_with_metadata(
+        name: &str,
+        source: &str,
+        version: Option<&str>,
+        description: Option<String>,
+        stars: Option<u64>,
+        url: Option<String>,
+    ) -> Option<InstallTask> {
         // Always regenerate display command - don't trust external sources
         let display_command =
             get_install_command_versioned(name, source, version).unwrap_or_else(|| {
@@ -178,6 +192,9 @@ impl App {
             source: source.to_string(),
             version: version.map(String::from),
             display_command,
+            description,
+            stars,
+            url,
         })
     }
 
@@ -288,29 +305,125 @@ impl App {
             return;
         };
 
-        let Some(option) = result.install_options.first() else {
-            self.set_status("No install command available", true);
+        // Filter to installable options (exclude GitHub, AI)
+        let installable_options: Vec<InstallOption> = result
+            .install_options
+            .iter()
+            .filter(|opt| {
+                matches!(
+                    opt.source,
+                    DiscoverSource::CratesIo
+                        | DiscoverSource::PyPI
+                        | DiscoverSource::Npm
+                        | DiscoverSource::Homebrew
+                        | DiscoverSource::Apt
+                )
+            })
+            .cloned()
+            .collect();
+
+        if installable_options.is_empty() {
+            self.set_status("No installable source available (GitHub/AI only)", true);
             return;
+        }
+
+        // Build metadata from discover result
+        let metadata = DiscoverMetadata {
+            description: result.description.clone(),
+            stars: result.stars,
+            url: result.url.clone(),
         };
 
-        // Map DiscoverSource to source string
-        let source = match option.source {
+        // If multiple sources available, show selection dialog
+        if installable_options.len() > 1 {
+            self.pending_action = Some(PendingAction::DiscoverSelectSource(
+                result.name.clone(),
+                installable_options,
+                0,
+                metadata,
+            ));
+            return;
+        }
+
+        // Single source - proceed directly
+        let option = &installable_options[0];
+        let source = Self::discover_source_to_str(&option.source);
+
+        // Always regenerate display command for security - don't trust external sources
+        let Some(task) = Self::build_install_task_with_metadata(
+            &result.name,
+            source,
+            None,
+            metadata.description,
+            metadata.stars,
+            metadata.url,
+        ) else {
+            self.set_status("Failed to build install command", true);
+            return;
+        };
+        self.pending_action = Some(PendingAction::DiscoverInstall(task));
+    }
+
+    /// Convert DiscoverSource to source string for install
+    fn discover_source_to_str(source: &DiscoverSource) -> &'static str {
+        match source {
             DiscoverSource::CratesIo => "cargo",
             DiscoverSource::PyPI => "pip",
             DiscoverSource::Npm => "npm",
             DiscoverSource::Homebrew => "brew",
             DiscoverSource::Apt => "apt",
-            _ => {
-                self.set_status("Cannot install directly (GitHub/AI source)", true);
+            DiscoverSource::GitHub | DiscoverSource::AI => "unknown",
+        }
+    }
+
+    /// Navigate source selection up/down (delta: 1 for down, -1 for up)
+    pub fn navigate_source_selection(&mut self, delta: i32) {
+        if let Some(PendingAction::DiscoverSelectSource(_, options, selected, _)) =
+            &mut self.pending_action
+        {
+            let len = options.len();
+            if len == 0 {
                 return;
             }
+            if delta > 0 {
+                *selected = (*selected + 1) % len;
+            } else {
+                *selected = selected.checked_sub(1).unwrap_or(len - 1);
+            }
+        }
+    }
+
+    /// Confirm source selection and convert to DiscoverInstall
+    pub fn confirm_source_selection(&mut self) {
+        let (name, options, selected, metadata) =
+            if let Some(PendingAction::DiscoverSelectSource(name, options, selected, metadata)) =
+                self.pending_action.take()
+            {
+                (name, options, selected, metadata)
+            } else {
+                return;
+            };
+
+        let Some(option) = options.get(selected) else {
+            self.set_status("Invalid selection", true);
+            return;
         };
 
-        // Always regenerate display command for security - don't trust external sources
-        let Some(task) = Self::build_install_task(&result.name, source, None) else {
+        let source = Self::discover_source_to_str(&option.source);
+
+        // Build install task for the selected source with metadata
+        let Some(task) = Self::build_install_task_with_metadata(
+            &name,
+            source,
+            None,
+            metadata.description,
+            metadata.stars,
+            metadata.url,
+        ) else {
             self.set_status("Failed to build install command", true);
             return;
         };
+
         self.pending_action = Some(PendingAction::DiscoverInstall(task));
     }
 

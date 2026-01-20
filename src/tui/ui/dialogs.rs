@@ -589,20 +589,63 @@ pub fn render_confirmation_dialog(frame: &mut Frame, app: &App, theme: &Theme, a
             }
             (" Update ", lines, theme.yellow)
         }
+        PendingAction::DiscoverSelectSource(name, options, selected, _) => {
+            let mut lines = vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    format!("Select install source for {}", name),
+                    Style::default().fg(theme.text),
+                )),
+                Line::from(""),
+            ];
+            for (i, option) in options.iter().enumerate() {
+                let is_selected = i == *selected;
+                let prefix = if is_selected { "▶ " } else { "  " };
+                let style = if is_selected {
+                    Style::default().fg(theme.green).bold()
+                } else {
+                    Style::default().fg(theme.subtext0)
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(prefix, style),
+                    Span::styled(option.source.icon(), style),
+                    Span::raw(" "),
+                    Span::styled(&option.install_command, style),
+                ]));
+            }
+            (" Select Source ", lines, theme.blue)
+        }
     };
+
+    // Check if this is source selection (different hints)
+    let is_source_selection = matches!(
+        app.pending_action,
+        Some(PendingAction::DiscoverSelectSource(..))
+    );
 
     // Add confirmation hint
     let mut content_lines = lines;
     content_lines.push(Line::from(""));
-    content_lines.push(Line::from(vec![
-        Span::styled("Press ", Style::default().fg(theme.subtext0)),
-        Span::styled("y", Style::default().fg(theme.green).bold()),
-        Span::styled(" to confirm, ", Style::default().fg(theme.subtext0)),
-        Span::styled("n", Style::default().fg(theme.red).bold()),
-        Span::styled(" or ", Style::default().fg(theme.subtext0)),
-        Span::styled("Esc", Style::default().fg(theme.yellow).bold()),
-        Span::styled(" to cancel", Style::default().fg(theme.subtext0)),
-    ]));
+    if is_source_selection {
+        content_lines.push(Line::from(vec![
+            Span::styled("j/k", Style::default().fg(theme.blue).bold()),
+            Span::styled(" navigate  ", Style::default().fg(theme.subtext0)),
+            Span::styled("Enter", Style::default().fg(theme.green).bold()),
+            Span::styled(" select  ", Style::default().fg(theme.subtext0)),
+            Span::styled("Esc", Style::default().fg(theme.yellow).bold()),
+            Span::styled(" cancel", Style::default().fg(theme.subtext0)),
+        ]));
+    } else {
+        content_lines.push(Line::from(vec![
+            Span::styled("Press ", Style::default().fg(theme.subtext0)),
+            Span::styled("y", Style::default().fg(theme.green).bold()),
+            Span::styled(" to confirm, ", Style::default().fg(theme.subtext0)),
+            Span::styled("n", Style::default().fg(theme.red).bold()),
+            Span::styled(" or ", Style::default().fg(theme.subtext0)),
+            Span::styled("Esc", Style::default().fg(theme.yellow).bold()),
+            Span::styled(" to cancel", Style::default().fg(theme.subtext0)),
+        ]));
+    }
 
     let content = Text::from(content_lines);
 

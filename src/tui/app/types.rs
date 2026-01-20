@@ -8,7 +8,7 @@ use crate::config::{AiProvider, ClaudeModel, HoardConfig, SourcesConfig, TuiThem
 use crate::models::InstallSource;
 
 /// An install option for a discovered tool
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstallOption {
     pub source: DiscoverSource,
     pub install_command: String,
@@ -458,6 +458,10 @@ pub struct InstallTask {
     pub source: String,          // "cargo", "pip", etc.
     pub version: Option<String>, // Target version for updates
     pub display_command: String, // For confirmation dialog
+    // Optional metadata from Discover (for syncing to database)
+    pub description: Option<String>,
+    pub stars: Option<u64>,
+    pub url: Option<String>,
 }
 
 /// Result of an install/update attempt
@@ -535,6 +539,14 @@ pub const PACKAGE_MANAGERS: &[(&str, &str)] = &[
     ("brew", "Homebrew"),
 ];
 
+/// Metadata from Discover for syncing to database after install
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DiscoverMetadata {
+    pub description: Option<String>,
+    pub stars: Option<u64>,
+    pub url: Option<String>,
+}
+
 /// Pending action requiring confirmation
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PendingAction {
@@ -542,6 +554,8 @@ pub enum PendingAction {
     Uninstall(Vec<String>),       // Tool names to uninstall
     Update(Vec<InstallTask>),     // Tools to update (with metadata)
     DiscoverInstall(InstallTask), // Single discover install
+    /// Select source for multi-source discover install (name, options, selected_index, metadata)
+    DiscoverSelectSource(String, Vec<InstallOption>, usize, DiscoverMetadata),
 }
 
 impl PendingAction {
@@ -571,6 +585,9 @@ impl PendingAction {
             PendingAction::DiscoverInstall(task) => {
                 format!("Install {}?", task.name)
             }
+            PendingAction::DiscoverSelectSource(name, ..) => {
+                format!("Select install source for {}", name)
+            }
         }
     }
 
@@ -581,6 +598,7 @@ impl PendingAction {
             PendingAction::Uninstall(tools) => tools.iter().map(|s| s.as_str()).collect(),
             PendingAction::Update(tasks) => tasks.iter().map(|t| t.name.as_str()).collect(),
             PendingAction::DiscoverInstall(task) => vec![task.name.as_str()],
+            PendingAction::DiscoverSelectSource(name, ..) => vec![name.as_str()],
         }
     }
 
@@ -590,7 +608,7 @@ impl PendingAction {
             PendingAction::Install(tasks) => Some(tasks.iter().collect()),
             PendingAction::Update(tasks) => Some(tasks.iter().collect()),
             PendingAction::DiscoverInstall(task) => Some(vec![task]),
-            PendingAction::Uninstall(_) => None,
+            PendingAction::Uninstall(_) | PendingAction::DiscoverSelectSource(..) => None,
         }
     }
 }
