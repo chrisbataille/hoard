@@ -985,23 +985,31 @@ impl App {
         // Check if we have a running install operation
         if let Some(ref mut op) = self.install_operation {
             // Poll for new output lines (non-blocking)
+            // Limit reads per tick to avoid blocking input processing
             use std::sync::mpsc::TryRecvError;
-            loop {
+            const MAX_LINES_PER_TICK: usize = 20;
+            let mut lines_read = 0;
+
+            while lines_read < MAX_LINES_PER_TICK {
                 match op.output_receiver.try_recv() {
                     Ok(line) => {
                         self.install_output.push(line);
-                        // Auto-scroll to bottom if near bottom already
-                        let visible_lines = 10; // Approximate visible lines in overlay
-                        if self.install_output.len() > visible_lines
-                            && self.install_output_scroll
-                                >= self.install_output.len().saturating_sub(visible_lines + 2)
-                        {
-                            self.install_output_scroll =
-                                self.install_output.len().saturating_sub(visible_lines);
-                        }
+                        lines_read += 1;
                     }
                     Err(TryRecvError::Empty) => break,
                     Err(TryRecvError::Disconnected) => break,
+                }
+            }
+
+            // Auto-scroll to bottom if user hasn't scrolled up
+            if lines_read > 0 {
+                let visible_lines = 10;
+                // Only auto-scroll if we're near the bottom (within 2 lines)
+                if self.install_output_scroll
+                    >= self.install_output.len().saturating_sub(visible_lines + lines_read + 2)
+                {
+                    self.install_output_scroll =
+                        self.install_output.len().saturating_sub(visible_lines);
                 }
             }
 
