@@ -441,6 +441,7 @@ impl App {
                     source: r.source,
                     stars: r.stars,
                     url: r.url,
+                    language: r.language,
                     install_options,
                 });
             }
@@ -511,6 +512,7 @@ impl App {
                                 source: r.source,
                                 stars: r.stars,
                                 url: r.url,
+                                language: r.language,
                                 install_options,
                             });
                         }
@@ -646,6 +648,7 @@ impl App {
                 source: r.source,
                 stars: r.stars,
                 url: r.url,
+                language: r.language,
                 install_options,
             });
         }

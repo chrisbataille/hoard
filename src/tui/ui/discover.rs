@@ -440,42 +440,69 @@ pub fn render_discover_details(frame: &mut Frame, app: &App, theme: &Theme, area
             lines.push(Line::from(""));
         }
 
+        // Source info section (like GitHub section in installed view)
+        lines.push(Line::from(Span::styled(
+            "Package Info:",
+            Style::default()
+                .fg(theme.subtext0)
+                .add_modifier(Modifier::BOLD),
+        )));
+
         // Source
         let icon = result.source.icon();
         lines.push(Line::from(vec![
-            Span::styled("Source: ", Style::default().fg(theme.subtext0)),
+            Span::styled("  Source: ", Style::default().fg(theme.subtext0)),
             Span::styled(
                 format!("{} {:?}", icon, result.source),
                 Style::default().fg(theme.peach),
             ),
         ]));
 
+        // Language (explicit or inferred from source)
+        let language = result.get_language();
+        if let Some(lang) = language {
+            lines.push(Line::from(vec![
+                Span::styled("  Language: ", Style::default().fg(theme.subtext0)),
+                Span::styled(lang.to_string(), Style::default().fg(theme.peach)),
+            ]));
+        }
+
         // Stars
         if let Some(stars) = result.stars {
             lines.push(Line::from(vec![
-                Span::styled("Stars: ", Style::default().fg(theme.subtext0)),
+                Span::styled("  ★ Stars: ", Style::default().fg(theme.yellow)),
                 Span::styled(
-                    format!("★ {}", format_stars(stars as i64)),
+                    format_stars(stars as i64),
                     Style::default().fg(theme.yellow),
                 ),
             ]));
         }
 
-        // URL
+        // URL / Repo
         if let Some(url) = &result.url {
+            // Try to extract repo info from URL
+            let repo_display = if url.contains("github.com") {
+                url.trim_start_matches("https://github.com/")
+                    .trim_end_matches('/')
+                    .to_string()
+            } else {
+                url.clone()
+            };
             lines.push(Line::from(vec![
-                Span::styled("URL: ", Style::default().fg(theme.subtext0)),
-                Span::styled(url.clone(), Style::default().fg(theme.blue)),
+                Span::styled("  URL: ", Style::default().fg(theme.subtext0)),
+                Span::styled(repo_display, Style::default().fg(theme.blue)),
             ]));
         }
 
         lines.push(Line::from(""));
 
-        // Install options
+        // Install section
         if !result.install_options.is_empty() {
             lines.push(Line::from(Span::styled(
-                "Install commands:",
-                Style::default().fg(theme.subtext0),
+                "Install:",
+                Style::default()
+                    .fg(theme.subtext0)
+                    .add_modifier(Modifier::BOLD),
             )));
             for opt in &result.install_options {
                 let opt_icon = opt.source.icon();
@@ -487,10 +514,8 @@ pub fn render_discover_details(frame: &mut Frame, app: &App, theme: &Theme, area
                     ),
                 ]));
             }
+            lines.push(Line::from(""));
         }
-
-        lines.push(Line::from(""));
-        lines.push(Line::from(""));
 
         // Keyboard hints
         lines.push(Line::from(Span::styled(
@@ -501,7 +526,7 @@ pub fn render_discover_details(frame: &mut Frame, app: &App, theme: &Theme, area
             Span::styled("i", Style::default().fg(theme.mauve)),
             Span::styled(" install  ", Style::default().fg(theme.subtext0)),
             Span::styled("Enter", Style::default().fg(theme.mauve)),
-            Span::styled(" open URL", Style::default().fg(theme.subtext0)),
+            Span::styled(" view README", Style::default().fg(theme.subtext0)),
         ]));
 
         lines

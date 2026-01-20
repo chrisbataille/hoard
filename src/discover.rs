@@ -27,6 +27,7 @@ pub struct DiscoverResult {
     pub source: DiscoverSource,
     pub stars: Option<u64>,
     pub url: Option<String>,
+    pub language: Option<String>,
     pub install_options: Vec<InstallOption>,
 }
 
@@ -44,6 +45,7 @@ impl DiscoverResult {
             source: source.clone(),
             stars: None,
             url: None,
+            language: None,
             install_options: vec![InstallOption {
                 source,
                 install_command,
@@ -60,6 +62,12 @@ impl DiscoverResult {
     /// Add URL to the result
     pub fn with_url(mut self, url: String) -> Self {
         self.url = Some(url);
+        self
+    }
+
+    /// Add language to the result
+    pub fn with_language(mut self, language: String) -> Self {
+        self.language = Some(language);
         self
     }
 }
@@ -671,6 +679,7 @@ impl SearchSource for GitHubSearch {
                                 DiscoverResult::new(name, description, source, install_cmd);
                             result.stars = Some(stars);
                             result.url = url;
+                            result.language = Some(language);
                             Some(result)
                         } else {
                             None

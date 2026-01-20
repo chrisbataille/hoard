@@ -22,6 +22,7 @@ pub struct DiscoverResult {
     pub source: DiscoverSource,
     pub stars: Option<u64>,
     pub url: Option<String>,
+    pub language: Option<String>,
     pub install_options: Vec<InstallOption>,
 }
 
@@ -31,6 +32,20 @@ impl DiscoverResult {
         self.install_options
             .first()
             .map(|o| o.install_command.as_str())
+    }
+
+    /// Get the language (explicit or inferred from source)
+    pub fn get_language(&self) -> Option<&str> {
+        if let Some(lang) = &self.language {
+            return Some(lang);
+        }
+        // Infer from source
+        match self.source {
+            DiscoverSource::CratesIo => Some("Rust"),
+            DiscoverSource::PyPI => Some("Python"),
+            DiscoverSource::Npm => Some("JavaScript"),
+            _ => None,
+        }
     }
 }
 
