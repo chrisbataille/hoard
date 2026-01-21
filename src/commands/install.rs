@@ -299,10 +299,21 @@ pub fn get_install_command_versioned(
 }
 
 /// Get a safe install command (validates input, returns structured command)
+/// For Go packages, pass the URL to construct the full module path.
 pub fn get_safe_install_command(
     name: &str,
     source: &str,
     version: Option<&str>,
+) -> Result<Option<SafeCommand>> {
+    get_safe_install_command_with_url(name, source, version, None)
+}
+
+/// Get a safe install command with optional URL (for Go packages)
+pub fn get_safe_install_command_with_url(
+    name: &str,
+    source: &str,
+    version: Option<&str>,
+    url: Option<&str>,
 ) -> Result<Option<SafeCommand>> {
     validate_package_name(name)?;
     if let Some(v) = version {
@@ -365,6 +376,21 @@ pub fn get_safe_install_command(
             args: vec!["install".into(), "-y".into(), name.into()],
             display: format!("flatpak install -y {}", name),
         }),
+        ("go", _) => {
+            // For Go, construct the full module path using URL if available
+            // Most Go CLI tools use the /cmd/name pattern
+            let install_path = if let Some(u) = url {
+                let go_path = u.strip_prefix("https://").unwrap_or(u);
+                format!("{}/cmd/{}", go_path, name)
+            } else {
+                name.to_string()
+            };
+            Some(SafeCommand {
+                program: "go",
+                args: vec!["install".into(), format!("{}@latest", install_path)],
+                display: format!("go install {}@latest", install_path),
+            })
+        }
         _ => None,
     };
     Ok(cmd)

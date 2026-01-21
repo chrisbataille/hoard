@@ -257,6 +257,7 @@ fn render_discover_empty_state(frame: &mut Frame, app: &App, theme: &Theme, area
                 "pip" => "Python packages (PyPI)",
                 "brew" => "Homebrew formulae",
                 "apt" => "Debian/Ubuntu packages",
+                "go" => "Go packages (GitHub)",
                 "github" => "GitHub repositories",
                 _ => continue,
             };

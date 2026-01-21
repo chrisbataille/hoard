@@ -177,15 +177,24 @@ impl App {
         stars: Option<u64>,
         url: Option<String>,
     ) -> Option<InstallTask> {
-        // Always regenerate display command - don't trust external sources
-        let display_command =
+        // For Go packages, construct command using URL with /cmd/name pattern
+        let display_command = if source == "go" {
+            if let Some(ref u) = url {
+                let go_path = u.strip_prefix("https://").unwrap_or(u);
+                format!("go install {}/cmd/{}@latest", go_path, name)
+            } else {
+                format!("go install {}@latest", name)
+            }
+        } else {
+            // Always regenerate display command - don't trust external sources
             get_install_command_versioned(name, source, version).unwrap_or_else(|| {
                 // Fallback display
                 match version {
                     Some(v) => format!("{} install {}@{}", source, name, v),
                     None => format!("{} install {}", source, name),
                 }
-            });
+            })
+        };
 
         Some(InstallTask {
             name: name.to_string(),
@@ -317,6 +326,7 @@ impl App {
                         | DiscoverSource::Npm
                         | DiscoverSource::Homebrew
                         | DiscoverSource::Apt
+                        | DiscoverSource::Go
                 )
             })
             .cloned()
@@ -350,6 +360,7 @@ impl App {
         let source = Self::discover_source_to_str(&option.source);
 
         // Always regenerate display command for security - don't trust external sources
+        // For Go, the URL is used to construct the full module path in build_install_task_with_metadata
         let Some(task) = Self::build_install_task_with_metadata(
             &result.name,
             source,
@@ -372,6 +383,7 @@ impl App {
             DiscoverSource::Npm => "npm",
             DiscoverSource::Homebrew => "brew",
             DiscoverSource::Apt => "apt",
+            DiscoverSource::Go => "go",
             DiscoverSource::GitHub | DiscoverSource::AI => "unknown",
         }
     }
@@ -412,6 +424,7 @@ impl App {
         let source = Self::discover_source_to_str(&option.source);
 
         // Build install task for the selected source with metadata
+        // For Go, the URL is used to construct the full module path in build_install_task_with_metadata
         let Some(task) = Self::build_install_task_with_metadata(
             &name,
             source,

@@ -142,7 +142,7 @@ impl SearchSource for CratesIoSearch {
                     let downloads = *downloads;
                     let repository = repository.clone();
                     s.spawn(move || {
-                        if crate_has_binaries(&name) {
+                        if crate_has_binaries(&name) == Some(true) {
                             let mut result = DiscoverResult::new(
                                 name.clone(),
                                 description,
@@ -177,16 +177,26 @@ impl SearchSource for CratesIoSearch {
 }
 
 /// Check if a crate has binaries by fetching its details from crates.io
-fn crate_has_binaries(name: &str) -> bool {
+/// Returns Some(true) if crate exists and has binaries
+/// Returns Some(false) if crate exists but has no binaries
+/// Returns None if crate doesn't exist (404)
+fn crate_has_binaries(name: &str) -> Option<bool> {
     let url = format!("https://crates.io/api/v1/crates/{}", name);
 
-    let Ok(mut response) = HTTP_AGENT.get(&url).call() else {
-        // On error, assume it might have binaries (don't filter it out)
-        return true;
+    let response = match HTTP_AGENT.get(&url).call() {
+        Ok(resp) => resp,
+        Err(ureq::Error::StatusCode(404)) => {
+            // Package doesn't exist on crates.io
+            return None;
+        }
+        Err(_) => {
+            // Network error - can't determine, assume it might have binaries
+            return Some(true);
+        }
     };
 
-    let Ok(data): Result<serde_json::Value, _> = response.body_mut().read_json() else {
-        return true;
+    let Ok(data): Result<serde_json::Value, _> = response.into_body().read_json() else {
+        return Some(true);
     };
 
     // Check if newest version has binaries
@@ -196,10 +206,10 @@ fn crate_has_binaries(name: &str) -> bool {
 
     if let Some(latest) = versions.first() {
         let bin_names = latest["bin_names"].as_array().unwrap_or(&empty_vec);
-        !bin_names.is_empty()
+        Some(!bin_names.is_empty())
     } else {
         // No versions found, assume it might have binaries
-        true
+        Some(true)
     }
 }
 
@@ -293,11 +303,19 @@ impl SearchSource for NpmSearch {
 fn npm_package_has_bin(name: &str) -> bool {
     let url = format!("https://registry.npmjs.org/{}", urlencoding::encode(name));
 
-    let Ok(mut response) = HTTP_AGENT.get(&url).call() else {
-        return true; // On error, don't filter out
+    let response = match HTTP_AGENT.get(&url).call() {
+        Ok(resp) => resp,
+        Err(ureq::Error::StatusCode(404)) => {
+            // Package doesn't exist on npm
+            return false;
+        }
+        Err(_) => {
+            // Network error - can't determine, assume it might have bin
+            return true;
+        }
     };
 
-    let Ok(data): Result<serde_json::Value, _> = response.body_mut().read_json() else {
+    let Ok(data): Result<serde_json::Value, _> = response.into_body().read_json() else {
         return true;
     };
 
@@ -419,11 +437,19 @@ impl SearchSource for PyPISearch {
 fn pypi_package_has_cli(name: &str) -> bool {
     let url = format!("https://pypi.org/pypi/{}/json", urlencoding::encode(name));
 
-    let Ok(mut response) = HTTP_AGENT.get(&url).call() else {
-        return true; // On error, don't filter out
+    let response = match HTTP_AGENT.get(&url).call() {
+        Ok(resp) => resp,
+        Err(ureq::Error::StatusCode(404)) => {
+            // Package doesn't exist on PyPI
+            return false;
+        }
+        Err(_) => {
+            // Network error - can't determine, assume it might have CLI
+            return true;
+        }
     };
 
-    let Ok(data): Result<serde_json::Value, _> = response.body_mut().read_json() else {
+    let Ok(data): Result<serde_json::Value, _> = response.into_body().read_json() else {
         return true;
     };
 
@@ -586,28 +612,6 @@ impl SearchSource for AptSearch {
 
 pub struct GitHubSearch;
 
-impl GitHubSearch {
-    /// Map GitHub language to DiscoverSource
-    fn language_to_source(language: &str) -> Option<DiscoverSource> {
-        match language.to_lowercase().as_str() {
-            "rust" => Some(DiscoverSource::CratesIo),
-            "python" => Some(DiscoverSource::PyPI),
-            "javascript" | "typescript" => Some(DiscoverSource::Npm),
-            _ => None,
-        }
-    }
-
-    /// Generate install command based on language
-    fn install_command(name: &str, language: &str) -> Option<String> {
-        match language.to_lowercase().as_str() {
-            "rust" => Some(format!("cargo install {}", name)),
-            "python" => Some(format!("pip install {}", name)),
-            "javascript" | "typescript" => Some(format!("npm install -g {}", name)),
-            _ => None,
-        }
-    }
-}
-
 impl SearchSource for GitHubSearch {
     fn name(&self) -> &'static str {
         "GitHub"
@@ -671,27 +675,67 @@ impl SearchSource for GitHubSearch {
                     let language = language.clone();
                     let url = url.clone();
                     s.spawn(move || {
-                        // Verify package exists and is installable on the registry
-                        let is_installable = match language.to_lowercase().as_str() {
-                            "rust" => crate_has_binaries(&name),
-                            "python" => pypi_package_has_cli(&name),
-                            "javascript" | "typescript" => npm_package_has_bin(&name),
-                            _ => false,
+                        // Determine source and install command based on language
+                        let (source, install_cmd) = match language.to_lowercase().as_str() {
+                            "rust" => {
+                                match crate_has_binaries(&name) {
+                                    Some(true) => {
+                                        // Exists on crates.io with binaries
+                                        (
+                                            DiscoverSource::CratesIo,
+                                            format!("cargo install {}", name),
+                                        )
+                                    }
+                                    Some(false) => {
+                                        // Exists on crates.io but no binaries - skip
+                                        return None;
+                                    }
+                                    None => {
+                                        // Not on crates.io - offer git install if we have a URL
+                                        let git_url = url.as_ref()?;
+                                        (
+                                            DiscoverSource::GitHub,
+                                            format!("cargo install --git {}", git_url),
+                                        )
+                                    }
+                                }
+                            }
+                            "python" => {
+                                if pypi_package_has_cli(&name) {
+                                    (DiscoverSource::PyPI, format!("pip install {}", name))
+                                } else {
+                                    return None;
+                                }
+                            }
+                            "javascript" | "typescript" => {
+                                if npm_package_has_bin(&name) {
+                                    (DiscoverSource::Npm, format!("npm install -g {}", name))
+                                } else {
+                                    return None;
+                                }
+                            }
+                            "go" => {
+                                // Go installs directly from GitHub - no registry validation needed
+                                // Strip https:// prefix - go install needs github.com/user/repo format
+                                // Most Go CLI tools use the /cmd/name pattern for main package
+                                let git_url = url.as_ref()?;
+                                let go_path = git_url.strip_prefix("https://").unwrap_or(git_url);
+                                // Use /cmd/{name} pattern - standard for Go CLI tools
+                                let install_path = format!("{}/cmd/{}", go_path, name);
+                                (
+                                    DiscoverSource::Go,
+                                    format!("go install {}@latest", install_path),
+                                )
+                            }
+                            _ => return None,
                         };
 
-                        if is_installable {
-                            let source = GitHubSearch::language_to_source(&language)?;
-                            let install_cmd = GitHubSearch::install_command(&name, &language)?;
-
-                            let mut result =
-                                DiscoverResult::new(name, description, source, install_cmd);
-                            result.stars = Some(stars);
-                            result.url = url;
-                            result.language = Some(language);
-                            Some(result)
-                        } else {
-                            None
-                        }
+                        let mut result =
+                            DiscoverResult::new(name, description, source, install_cmd);
+                        result.stars = Some(stars);
+                        result.url = url;
+                        result.language = Some(language);
+                        Some(result)
                     })
                 })
                 .collect();
@@ -781,7 +825,10 @@ impl SearchSource for AiSearch {
                     s.spawn(move || {
                         // Validate the package exists and is installable
                         let is_valid = match source {
-                            DiscoverSource::CratesIo => crate_has_binaries(&name),
+                            DiscoverSource::CratesIo => {
+                                // For AI-recommended crates.io packages, require they exist with binaries
+                                crate_has_binaries(&name) == Some(true)
+                            }
                             DiscoverSource::PyPI => pypi_package_has_cli(&name),
                             DiscoverSource::Npm => npm_package_has_bin(&name),
                             // apt/brew recommendations are assumed valid
@@ -989,27 +1036,6 @@ mod tests {
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].name, "rip-grep"); // GitHub one has more stars
         assert_eq!(merged[0].install_options.len(), 2);
-    }
-
-    #[test]
-    fn test_github_language_mapping() {
-        assert_eq!(
-            GitHubSearch::language_to_source("Rust"),
-            Some(DiscoverSource::CratesIo)
-        );
-        assert_eq!(
-            GitHubSearch::language_to_source("Python"),
-            Some(DiscoverSource::PyPI)
-        );
-        assert_eq!(
-            GitHubSearch::language_to_source("JavaScript"),
-            Some(DiscoverSource::Npm)
-        );
-        assert_eq!(
-            GitHubSearch::language_to_source("TypeScript"),
-            Some(DiscoverSource::Npm)
-        );
-        assert_eq!(GitHubSearch::language_to_source("Go"), None);
     }
 
     #[test]

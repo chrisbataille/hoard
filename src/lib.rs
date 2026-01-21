@@ -46,7 +46,8 @@ pub use updates::{
 // Install commands
 pub use commands::{
     SafeCommand, cmd_install, cmd_uninstall, cmd_upgrade, get_install_command,
-    get_safe_install_command, get_safe_uninstall_command, validate_package_name,
+    get_safe_install_command, get_safe_install_command_with_url, get_safe_uninstall_command,
+    validate_package_name,
 };
 
 // AI commands

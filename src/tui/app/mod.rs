@@ -30,6 +30,7 @@ use crate::Update;
 use crate::config::{AiProvider, HoardConfig};
 use crate::db::Database;
 use crate::models::{Bundle, Tool};
+use crate::sources::PackageManagerStatus;
 
 // Re-exports
 pub use components::{CacheManager, CommandPalette, fuzzy_match, fuzzy_match_positions};
@@ -49,6 +50,12 @@ pub struct AiOperation {
         std::thread::JoinHandle<Result<Vec<crate::discover::DiscoverResult>, String>>,
 }
 
+/// Tracks an async AI error analysis operation
+pub struct AiErrorAnalysis {
+    pub start_time: std::time::Instant,
+    pub thread_handle: std::thread::JoinHandle<Result<String, String>>,
+}
+
 /// Tracks a running install command that can be cancelled
 pub struct InstallOperation {
     pub task_name: String,
@@ -56,6 +63,10 @@ pub struct InstallOperation {
     pub start_time: std::time::Instant,
     /// Receiver for stdout/stderr lines from reader threads
     pub output_receiver: std::sync::mpsc::Receiver<OutputLine>,
+    /// Log file path for full output
+    pub log_path: std::path::PathBuf,
+    /// Log file writer
+    pub log_writer: Option<std::io::BufWriter<std::fs::File>>,
 }
 
 /// Main application state
@@ -109,8 +120,9 @@ pub struct App {
     pub last_config_popup_area: Option<(u16, u16, u16, u16)>, // (x, y, width, height) of config popup
 
     // Feature availability status (for footer display)
-    pub ai_available: bool, // AI provider is configured
-    pub gh_available: bool, // GitHub CLI is installed
+    pub ai_available: bool,                     // AI provider is configured
+    pub gh_available: bool,                     // GitHub CLI is installed
+    pub package_managers: PackageManagerStatus, // Package manager availability and versions
 
     // Last sync timestamp
     pub last_sync: Option<chrono::DateTime<chrono::Utc>>,
@@ -143,6 +155,9 @@ pub struct App {
     // Async AI operation tracking
     pub ai_operation: Option<AiOperation>,
 
+    // Async AI error analysis tracking
+    pub ai_error_analysis: Option<AiErrorAnalysis>,
+
     // Async install operation tracking (for cancellation)
     pub install_operation: Option<InstallOperation>,
 
@@ -153,6 +168,9 @@ pub struct App {
     // Live output from install/update commands
     pub install_output: Vec<OutputLine>,
     pub install_output_scroll: usize,
+
+    // Last failed install log path (for AI analysis)
+    pub last_install_log: Option<std::path::PathBuf>,
 }
 
 impl App {
@@ -166,6 +184,7 @@ impl App {
         let config = HoardConfig::load().unwrap_or_default();
         let ai_available = config.ai.provider != AiProvider::None;
         let gh_available = which::which("gh").is_ok();
+        let package_managers = PackageManagerStatus::detect();
 
         // Get theme from config
         let theme_variant = super::theme::ThemeVariant::from_config_theme(config.tui.theme);
@@ -210,6 +229,7 @@ impl App {
             last_config_popup_area: None,
             ai_available,
             gh_available,
+            package_managers,
             last_sync: db.get_last_sync_time().ok().flatten(),
             discover_query: String::new(),
             discover_results: Vec::new(),
@@ -232,11 +252,13 @@ impl App {
             error_modal: None,
             readme_popup: None,
             ai_operation: None,
+            ai_error_analysis: None,
             install_operation: None,
             password_input: String::new(),
             pending_sudo_tasks: None,
             install_output: Vec::new(),
             install_output_scroll: 0,
+            last_install_log: None,
         })
     }
 
@@ -806,6 +828,34 @@ impl App {
         self.notifications.clear();
     }
 
+    /// Start AI analysis of the last failed install
+    pub fn analyze_last_error(&mut self) {
+        let Some(log_path) = self.last_install_log.clone() else {
+            self.notify_warning("No recent install failure to analyze");
+            return;
+        };
+
+        if !log_path.exists() {
+            self.notify_error(format!("Log file not found: {}", log_path.display()));
+            return;
+        }
+
+        // Check if AI is configured
+        match crate::config::HoardConfig::load() {
+            Ok(config) if config.ai.provider == crate::config::AiProvider::None => {
+                self.notify_warning("AI not configured. Run 'hoards config' to set up AI.");
+                return;
+            }
+            Err(e) => {
+                self.notify_error(format!("Failed to load config: {}", e));
+                return;
+            }
+            _ => {}
+        }
+
+        self.schedule_op(BackgroundOp::AnalyzeError { log_path });
+    }
+
     // ========================================================================
     // Error Modal
     // ========================================================================
@@ -937,6 +987,100 @@ impl App {
                 current,
                 results,
             } => self.execute_install_step(db, tasks, current, results, true),
+            BackgroundOp::AnalyzeError { log_path } => self.execute_error_analysis_step(log_path),
+        }
+    }
+
+    /// Execute AI error analysis step
+    fn execute_error_analysis_step(&mut self, log_path: std::path::PathBuf) -> bool {
+        // Check if we already have an AI analysis running
+        if let Some(ref ai_analysis) = self.ai_error_analysis {
+            // Update progress
+            let elapsed = ai_analysis.start_time.elapsed().as_secs();
+            self.loading_progress = LoadingProgress {
+                current_step: 1,
+                total_steps: 1,
+                step_name: format!("Analyzing error... ({}s)", elapsed),
+                found_count: 0,
+            };
+
+            // Check if done
+            if ai_analysis.thread_handle.is_finished() {
+                let analysis = self.ai_error_analysis.take().unwrap();
+                match analysis.thread_handle.join() {
+                    Ok(Ok(suggestion)) => {
+                        // Show the AI suggestion in error modal (better for longer text)
+                        self.error_modal = Some(ErrorModal {
+                            title: "AI Analysis".to_string(),
+                            message: suggestion,
+                        });
+                    }
+                    Ok(Err(e)) => {
+                        self.notify_error(format!("AI analysis failed: {}", e));
+                    }
+                    Err(_) => {
+                        self.notify_error("AI analysis thread panicked");
+                    }
+                }
+                return false;
+            }
+
+            // Keep polling
+            self.background_op = Some(BackgroundOp::AnalyzeError { log_path });
+            true
+        } else {
+            // Start the analysis thread
+            self.loading_progress = LoadingProgress {
+                current_step: 1,
+                total_steps: 1,
+                step_name: "Starting AI analysis...".to_string(),
+                found_count: 0,
+            };
+
+            let log_path_clone = log_path.clone();
+            let thread_handle = std::thread::spawn(move || {
+                // Read the log file (last 200 lines to avoid token overflow)
+                let log_content = std::fs::read_to_string(&log_path_clone)
+                    .map_err(|e| format!("Failed to read log: {}", e))?;
+
+                let lines: Vec<&str> = log_content.lines().collect();
+                let truncated = if lines.len() > 200 {
+                    format!(
+                        "... ({} lines truncated)\n{}",
+                        lines.len() - 200,
+                        lines[lines.len() - 200..].join("\n")
+                    )
+                } else {
+                    log_content.clone()
+                };
+
+                // Build prompt for AI
+                let prompt = format!(
+                    r#"Analyze this install error log and provide a concise troubleshooting suggestion.
+Focus on:
+1. The root cause of the failure
+2. Specific steps to fix it (missing packages, permissions, etc.)
+3. Alternative approaches if applicable
+
+Keep your response under 300 words and be direct.
+
+=== INSTALL LOG ===
+{}
+=== END LOG ==="#,
+                    truncated
+                );
+
+                // Call AI
+                crate::ai::invoke_ai(&prompt).map_err(|e| e.to_string())
+            });
+
+            self.ai_error_analysis = Some(AiErrorAnalysis {
+                start_time: std::time::Instant::now(),
+                thread_handle,
+            });
+
+            self.background_op = Some(BackgroundOp::AnalyzeError { log_path });
+            true
         }
     }
 
@@ -950,7 +1094,7 @@ impl App {
         mut results: Vec<InstallResult>,
         is_update: bool,
     ) -> bool {
-        use crate::commands::install::get_safe_install_command;
+        use crate::commands::install::get_safe_install_command_with_url;
         use crate::models::{InstallSource, Tool};
         use std::process::Command;
 
@@ -986,6 +1130,7 @@ impl App {
         if let Some(ref mut op) = self.install_operation {
             // Poll for new output lines (non-blocking)
             // Limit reads per tick to avoid blocking input processing
+            use std::io::Write;
             use std::sync::mpsc::TryRecvError;
             const MAX_LINES_PER_TICK: usize = 20;
             let mut lines_read = 0;
@@ -993,6 +1138,15 @@ impl App {
             while lines_read < MAX_LINES_PER_TICK {
                 match op.output_receiver.try_recv() {
                     Ok(line) => {
+                        // Write to log file
+                        if let Some(ref mut w) = op.log_writer {
+                            let prefix = match line.line_type {
+                                OutputLineType::Stdout => "",
+                                OutputLineType::Stderr => "[stderr] ",
+                                OutputLineType::Status => "[status] ",
+                            };
+                            let _ = writeln!(w, "{}{}", prefix, line.content);
+                        }
                         self.install_output.push(line);
                         lines_read += 1;
                     }
@@ -1020,13 +1174,32 @@ impl App {
             match op.child.try_wait() {
                 Ok(Some(status)) => {
                     // Process finished - take ownership
-                    let finished_op = self.install_operation.take().unwrap();
+                    let mut finished_op = self.install_operation.take().unwrap();
 
                     // Drain any remaining output from the channel
                     // (reader threads might still be sending after process exit)
                     while let Ok(line) = finished_op.output_receiver.try_recv() {
+                        // Write to log file
+                        if let Some(ref mut w) = finished_op.log_writer {
+                            let prefix = match line.line_type {
+                                OutputLineType::Stdout => "",
+                                OutputLineType::Stderr => "[stderr] ",
+                                OutputLineType::Status => "[status] ",
+                            };
+                            let _ = writeln!(w, "{}{}", prefix, line.content);
+                        }
                         self.install_output.push(line);
                     }
+
+                    // Write final status to log and flush
+                    let log_path = finished_op.log_path.clone();
+                    if let Some(ref mut w) = finished_op.log_writer {
+                        let _ = writeln!(w, "\n=== Result ===");
+                        let _ = writeln!(w, "Exit code: {:?}", status.code());
+                        let _ = writeln!(w, "Success: {}", status.success());
+                        let _ = w.flush();
+                    }
+                    drop(finished_op.log_writer); // Close the file
 
                     // Collect stderr lines - prioritize actual error lines
                     let all_stderr: Vec<&str> = self
@@ -1150,13 +1323,25 @@ impl App {
                             error: db_warning,
                         }
                     } else {
-                        // Build error message with stderr output
+                        // Store log path for AI analysis
+                        self.last_install_log = Some(log_path.clone());
+
+                        // Build error message with stderr output and log path
                         let exit_code = status
                             .code()
                             .map_or("unknown".to_string(), |c| c.to_string());
                         let error_msg = match stderr_output {
-                            Some(stderr) => format!("Exit code {}: {}", exit_code, stderr),
-                            None => format!("Command failed with exit code: {}", exit_code),
+                            Some(stderr) => format!(
+                                "Exit code {}: {}\n\nFull log: {}",
+                                exit_code,
+                                stderr,
+                                log_path.display()
+                            ),
+                            None => format!(
+                                "Command failed with exit code: {}\n\nFull log: {}",
+                                exit_code,
+                                log_path.display()
+                            ),
                         };
 
                         InstallResult {
@@ -1256,92 +1441,156 @@ impl App {
             content: format!("$ {}", task.display_command),
         });
 
-        let result =
-            match get_safe_install_command(&task.name, &task.source, task.version.as_deref()) {
-                Ok(Some(cmd)) => {
-                    use std::io::BufRead;
-                    use std::sync::mpsc;
+        let result = match get_safe_install_command_with_url(
+            &task.name,
+            &task.source,
+            task.version.as_deref(),
+            task.url.as_deref(),
+        ) {
+            Ok(Some(cmd)) => {
+                use std::io::BufRead;
+                use std::io::Write;
+                use std::sync::mpsc;
 
-                    // Spawn the command with both stdout and stderr piped
-                    match Command::new(cmd.program)
-                        .args(&cmd.args)
-                        .stdout(std::process::Stdio::piped())
-                        .stderr(std::process::Stdio::piped())
-                        .spawn()
-                    {
-                        Ok(mut child) => {
-                            // Create channel for output lines
-                            let (tx, rx) = mpsc::channel::<OutputLine>();
+                // Create log file for full output
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let log_path = std::path::PathBuf::from(format!(
+                    "/tmp/hoards-install-{}-{}.log",
+                    task.name, timestamp
+                ));
+                let mut log_writer = std::fs::File::create(&log_path)
+                    .ok()
+                    .map(std::io::BufWriter::new);
 
-                            // Spawn thread to read stdout
-                            if let Some(stdout) = child.stdout.take() {
-                                let tx_stdout = tx.clone();
-                                std::thread::spawn(move || {
-                                    let reader = std::io::BufReader::new(stdout);
-                                    for line in reader.lines().map_while(Result::ok) {
-                                        let _ = tx_stdout.send(OutputLine {
-                                            line_type: OutputLineType::Stdout,
-                                            content: line,
-                                        });
-                                    }
-                                });
-                            }
-
-                            // Spawn thread to read stderr
-                            if let Some(stderr) = child.stderr.take() {
-                                let tx_stderr = tx;
-                                std::thread::spawn(move || {
-                                    let reader = std::io::BufReader::new(stderr);
-                                    for line in reader.lines().map_while(Result::ok) {
-                                        let _ = tx_stderr.send(OutputLine {
-                                            line_type: OutputLineType::Stderr,
-                                            content: line,
-                                        });
-                                    }
-                                });
-                            }
-
-                            self.install_operation = Some(InstallOperation {
-                                task_name: task.name.clone(),
-                                child,
-                                start_time: std::time::Instant::now(),
-                                output_receiver: rx,
-                            });
-
-                            // Keep polling this task
-                            if is_update {
-                                self.background_op = Some(BackgroundOp::ExecuteUpdate {
-                                    tasks,
-                                    current,
-                                    results,
-                                });
-                            } else {
-                                self.background_op = Some(BackgroundOp::ExecuteInstall {
-                                    tasks,
-                                    current,
-                                    results,
-                                });
-                            }
-                            return true;
-                        }
-                        Err(e) => InstallResult {
-                            name: task.name.clone(),
-                            success: false,
-                            error: Some(format!("Failed to spawn command: {:#}", e)),
-                        },
+                // Write header with context info to log
+                if let Some(ref mut w) = log_writer {
+                    let _ = writeln!(w, "=== Hoards Install Log ===");
+                    let _ = writeln!(w, "Tool: {}", task.name);
+                    let _ = writeln!(w, "Source: {}", task.source);
+                    if let Some(ref v) = task.version {
+                        let _ = writeln!(w, "Version: {}", v);
                     }
+                    let _ = writeln!(w, "Command: {}", task.display_command);
+                    let _ = writeln!(
+                        w,
+                        "Timestamp: {}",
+                        chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+                    );
+                    // OS info
+                    if let Ok(os) = std::fs::read_to_string("/etc/os-release")
+                        && let Some(pretty) = os.lines().find(|l| l.starts_with("PRETTY_NAME="))
+                    {
+                        let _ = writeln!(
+                            w,
+                            "OS: {}",
+                            pretty.trim_start_matches("PRETTY_NAME=").trim_matches('"')
+                        );
+                    }
+                    // Installer version
+                    let version_cmd = match task.source.as_str() {
+                        "cargo" => Some(("cargo", vec!["--version"])),
+                        "pip" | "pipx" => Some(("pip", vec!["--version"])),
+                        "npm" => Some(("npm", vec!["--version"])),
+                        "brew" => Some(("brew", vec!["--version"])),
+                        "apt" => Some(("apt", vec!["--version"])),
+                        _ => None,
+                    };
+                    if let Some((prog, args)) = version_cmd
+                        && let Ok(out) = Command::new(prog).args(&args).output()
+                    {
+                        let ver = String::from_utf8_lossy(&out.stdout);
+                        let _ =
+                            writeln!(w, "Installer: {}", ver.lines().next().unwrap_or("unknown"));
+                    }
+                    let _ = writeln!(w, "===========================\n");
+                    let _ = w.flush();
                 }
-                Ok(None) => InstallResult {
-                    name: task.name.clone(),
-                    success: false,
-                    error: Some(format!("Unknown install source: {}", task.source)),
-                },
-                Err(e) => InstallResult {
-                    name: task.name.clone(),
-                    success: false,
-                    error: Some(format!("Invalid package name: {:#}", e)),
-                },
-            };
+
+                // Spawn the command with both stdout and stderr piped
+                match Command::new(cmd.program)
+                    .args(&cmd.args)
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()
+                {
+                    Ok(mut child) => {
+                        // Create channel for output lines
+                        let (tx, rx) = mpsc::channel::<OutputLine>();
+
+                        // Spawn thread to read stdout
+                        if let Some(stdout) = child.stdout.take() {
+                            let tx_stdout = tx.clone();
+                            std::thread::spawn(move || {
+                                let reader = std::io::BufReader::new(stdout);
+                                for line in reader.lines().map_while(Result::ok) {
+                                    let _ = tx_stdout.send(OutputLine {
+                                        line_type: OutputLineType::Stdout,
+                                        content: line,
+                                    });
+                                }
+                            });
+                        }
+
+                        // Spawn thread to read stderr
+                        if let Some(stderr) = child.stderr.take() {
+                            let tx_stderr = tx;
+                            std::thread::spawn(move || {
+                                let reader = std::io::BufReader::new(stderr);
+                                for line in reader.lines().map_while(Result::ok) {
+                                    let _ = tx_stderr.send(OutputLine {
+                                        line_type: OutputLineType::Stderr,
+                                        content: line,
+                                    });
+                                }
+                            });
+                        }
+
+                        self.install_operation = Some(InstallOperation {
+                            task_name: task.name.clone(),
+                            child,
+                            start_time: std::time::Instant::now(),
+                            output_receiver: rx,
+                            log_path,
+                            log_writer,
+                        });
+
+                        // Keep polling this task
+                        if is_update {
+                            self.background_op = Some(BackgroundOp::ExecuteUpdate {
+                                tasks,
+                                current,
+                                results,
+                            });
+                        } else {
+                            self.background_op = Some(BackgroundOp::ExecuteInstall {
+                                tasks,
+                                current,
+                                results,
+                            });
+                        }
+                        return true;
+                    }
+                    Err(e) => InstallResult {
+                        name: task.name.clone(),
+                        success: false,
+                        error: Some(format!("Failed to spawn command: {:#}", e)),
+                    },
+                }
+            }
+            Ok(None) => InstallResult {
+                name: task.name.clone(),
+                success: false,
+                error: Some(format!("Unknown install source: {}", task.source)),
+            },
+            Err(e) => InstallResult {
+                name: task.name.clone(),
+                success: false,
+                error: Some(format!("Invalid package name: {:#}", e)),
+            },
+        };
 
         // Command failed to start - add result and continue to next
         results.push(result);
@@ -1394,7 +1643,7 @@ impl App {
         password: String,
         db: &Database,
     ) {
-        use crate::commands::install::get_safe_install_command;
+        use crate::commands::install::get_safe_install_command_with_url;
         use crate::models::{InstallSource, Tool};
         use std::io::Write;
         use std::process::{Command, Stdio};
@@ -1417,144 +1666,144 @@ impl App {
                     .count(),
             };
 
-            let result =
-                match get_safe_install_command(&task.name, &task.source, task.version.as_deref()) {
-                    Ok(Some(cmd)) => {
-                        // For sudo commands, use sudo -S to read password from stdin
-                        let child = Command::new("sudo")
-                            .arg("-S") // Read password from stdin
-                            .arg("--")
-                            .arg(cmd.program)
-                            .args(&cmd.args)
-                            .stdin(Stdio::piped())
-                            .stdout(Stdio::null())
-                            .stderr(Stdio::piped())
-                            .spawn();
+            let result = match get_safe_install_command_with_url(
+                &task.name,
+                &task.source,
+                task.version.as_deref(),
+                task.url.as_deref(),
+            ) {
+                Ok(Some(cmd)) => {
+                    // For sudo commands, use sudo -S to read password from stdin
+                    let child = Command::new("sudo")
+                        .arg("-S") // Read password from stdin
+                        .arg("--")
+                        .arg(cmd.program)
+                        .args(&cmd.args)
+                        .stdin(Stdio::piped())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::piped())
+                        .spawn();
 
-                        match child {
-                            Ok(mut child) => {
-                                // Write password to stdin
-                                if let Some(mut stdin) = child.stdin.take() {
-                                    let _ = writeln!(stdin, "{}", password);
-                                }
+                    match child {
+                        Ok(mut child) => {
+                            // Write password to stdin
+                            if let Some(mut stdin) = child.stdin.take() {
+                                let _ = writeln!(stdin, "{}", password);
+                            }
 
-                                // Wait for completion
-                                match child.wait_with_output() {
-                                    Ok(output) => {
-                                        if output.status.success() {
-                                            // Update database
-                                            let mut db_warning: Option<String> = None;
-                                            let existing =
-                                                db.get_tool_by_name(&task.name).ok().flatten();
-                                            let tool = if let Some(mut t) = existing {
-                                                t.is_installed = true;
-                                                // Add description from Discover if not already set
-                                                if t.description.is_none() {
-                                                    t.description = task.description.clone();
-                                                }
-                                                t
-                                            } else {
-                                                let mut new_tool = Tool::new(&task.name)
-                                                    .with_source(InstallSource::from(
-                                                        task.source.as_str(),
-                                                    ))
-                                                    .installed();
-                                                // Add description from Discover metadata
-                                                if let Some(ref desc) = task.description {
-                                                    new_tool = new_tool.with_description(desc);
-                                                }
-                                                new_tool
-                                            };
-                                            if let Err(e) = db.upsert_tool(&tool) {
-                                                db_warning =
-                                                    Some(format!("DB sync failed: {:#}", e));
+                            // Wait for completion
+                            match child.wait_with_output() {
+                                Ok(output) => {
+                                    if output.status.success() {
+                                        // Update database
+                                        let mut db_warning: Option<String> = None;
+                                        let existing =
+                                            db.get_tool_by_name(&task.name).ok().flatten();
+                                        let tool = if let Some(mut t) = existing {
+                                            t.is_installed = true;
+                                            // Add description from Discover if not already set
+                                            if t.description.is_none() {
+                                                t.description = task.description.clone();
                                             }
-
-                                            // Sync GitHub info if we have stars and a GitHub URL
-                                            if let (Some(stars), Some(url)) =
-                                                (task.stars, &task.url)
-                                                && let Ok((owner, repo)) =
-                                                    crate::ai::parse_github_url(url)
-                                            {
-                                                let gh_info = crate::db::GitHubInfoInput {
-                                                    repo_owner: &owner,
-                                                    repo_name: &repo,
-                                                    description: task.description.as_deref(),
-                                                    stars: stars as i64,
-                                                    language: None,
-                                                    homepage: None,
-                                                };
-                                                if let Err(e) =
-                                                    db.set_github_info(&task.name, gh_info)
-                                                {
-                                                    let msg =
-                                                        format!("GitHub sync failed: {:#}", e);
-                                                    db_warning = Some(match db_warning {
-                                                        Some(w) => format!("{}; {}", w, msg),
-                                                        None => msg,
-                                                    });
-                                                }
-                                            }
-
-                                            InstallResult {
-                                                name: task.name.clone(),
-                                                success: true,
-                                                error: db_warning,
-                                            }
+                                            t
                                         } else {
-                                            let stderr = String::from_utf8_lossy(&output.stderr);
-                                            let stderr_trimmed = stderr.trim();
-                                            // Filter out sudo password prompt from error
-                                            let filtered_stderr: String = stderr_trimmed
-                                                .lines()
-                                                .filter(|line| {
-                                                    !line.contains("[sudo]")
-                                                        && !line.contains("password for")
-                                                })
-                                                .collect::<Vec<_>>()
-                                                .join("\n");
-                                            let error_msg = if filtered_stderr.is_empty() {
-                                                format!(
-                                                    "Exit code: {}",
-                                                    output.status.code().unwrap_or(-1)
-                                                )
-                                            } else if filtered_stderr.len() > 500 {
-                                                format!("{}...", &filtered_stderr[..500])
-                                            } else {
-                                                filtered_stderr
+                                            let mut new_tool = Tool::new(&task.name)
+                                                .with_source(InstallSource::from(
+                                                    task.source.as_str(),
+                                                ))
+                                                .installed();
+                                            // Add description from Discover metadata
+                                            if let Some(ref desc) = task.description {
+                                                new_tool = new_tool.with_description(desc);
+                                            }
+                                            new_tool
+                                        };
+                                        if let Err(e) = db.upsert_tool(&tool) {
+                                            db_warning = Some(format!("DB sync failed: {:#}", e));
+                                        }
+
+                                        // Sync GitHub info if we have stars and a GitHub URL
+                                        if let (Some(stars), Some(url)) = (task.stars, &task.url)
+                                            && let Ok((owner, repo)) =
+                                                crate::ai::parse_github_url(url)
+                                        {
+                                            let gh_info = crate::db::GitHubInfoInput {
+                                                repo_owner: &owner,
+                                                repo_name: &repo,
+                                                description: task.description.as_deref(),
+                                                stars: stars as i64,
+                                                language: None,
+                                                homepage: None,
                                             };
-                                            InstallResult {
-                                                name: task.name.clone(),
-                                                success: false,
-                                                error: Some(error_msg),
+                                            if let Err(e) = db.set_github_info(&task.name, gh_info)
+                                            {
+                                                let msg = format!("GitHub sync failed: {:#}", e);
+                                                db_warning = Some(match db_warning {
+                                                    Some(w) => format!("{}; {}", w, msg),
+                                                    None => msg,
+                                                });
                                             }
                                         }
+
+                                        InstallResult {
+                                            name: task.name.clone(),
+                                            success: true,
+                                            error: db_warning,
+                                        }
+                                    } else {
+                                        let stderr = String::from_utf8_lossy(&output.stderr);
+                                        let stderr_trimmed = stderr.trim();
+                                        // Filter out sudo password prompt from error
+                                        let filtered_stderr: String = stderr_trimmed
+                                            .lines()
+                                            .filter(|line| {
+                                                !line.contains("[sudo]")
+                                                    && !line.contains("password for")
+                                            })
+                                            .collect::<Vec<_>>()
+                                            .join("\n");
+                                        let error_msg = if filtered_stderr.is_empty() {
+                                            format!(
+                                                "Exit code: {}",
+                                                output.status.code().unwrap_or(-1)
+                                            )
+                                        } else if filtered_stderr.len() > 500 {
+                                            format!("{}...", &filtered_stderr[..500])
+                                        } else {
+                                            filtered_stderr
+                                        };
+                                        InstallResult {
+                                            name: task.name.clone(),
+                                            success: false,
+                                            error: Some(error_msg),
+                                        }
                                     }
-                                    Err(e) => InstallResult {
-                                        name: task.name.clone(),
-                                        success: false,
-                                        error: Some(format!("Failed to wait for command: {:#}", e)),
-                                    },
                                 }
+                                Err(e) => InstallResult {
+                                    name: task.name.clone(),
+                                    success: false,
+                                    error: Some(format!("Failed to wait for command: {:#}", e)),
+                                },
                             }
-                            Err(e) => InstallResult {
-                                name: task.name.clone(),
-                                success: false,
-                                error: Some(format!("Failed to spawn command: {:#}", e)),
-                            },
                         }
+                        Err(e) => InstallResult {
+                            name: task.name.clone(),
+                            success: false,
+                            error: Some(format!("Failed to spawn command: {:#}", e)),
+                        },
                     }
-                    Ok(None) => InstallResult {
-                        name: task.name.clone(),
-                        success: false,
-                        error: Some(format!("Unknown install source: {}", task.source)),
-                    },
-                    Err(e) => InstallResult {
-                        name: task.name.clone(),
-                        success: false,
-                        error: Some(format!("Invalid package name: {:#}", e)),
-                    },
-                };
+                }
+                Ok(None) => InstallResult {
+                    name: task.name.clone(),
+                    success: false,
+                    error: Some(format!("Unknown install source: {}", task.source)),
+                },
+                Err(e) => InstallResult {
+                    name: task.name.clone(),
+                    success: false,
+                    error: Some(format!("Invalid package name: {:#}", e)),
+                },
+            };
 
             results.push(result);
         }

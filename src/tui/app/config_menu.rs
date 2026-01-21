@@ -97,9 +97,20 @@ impl App {
         self.config_menu.prev_item();
     }
 
-    /// Toggle source in config menu
+    /// Toggle source in config menu (only if the source is available)
     pub fn config_menu_toggle_source(&mut self) {
-        self.config_menu.toggle_current_source();
+        // Only allow toggling if the source is available
+        if self.config_menu.section == ConfigSection::Sources {
+            let sources = crate::config::SourcesConfig::all_sources();
+            if self.config_menu.source_focused < sources.len() {
+                let source_name = sources[self.config_menu.source_focused];
+                // Check if this package manager is available
+                if self.package_managers.is_available(source_name) {
+                    self.config_menu.toggle_current_source();
+                }
+                // If not available, do nothing (can't toggle)
+            }
+        }
     }
 
     // ========================================================================

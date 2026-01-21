@@ -491,6 +491,11 @@ fn handle_normal_mode(app: &mut App, key: KeyEvent, db: &Database) {
             }
         }
 
+        // AI analyze last install error
+        KeyCode::Char('a') => {
+            app.analyze_last_error();
+        }
+
         _ => {}
     }
 }

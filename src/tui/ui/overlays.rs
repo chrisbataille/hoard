@@ -157,6 +157,10 @@ pub fn render_help_overlay(frame: &mut Frame, theme: &Theme, area: Rect) {
             Span::styled("Cycle theme", Style::default().fg(theme.text)),
         ]),
         Line::from(vec![
+            Span::styled("  a        ", Style::default().fg(theme.mauve)),
+            Span::styled("AI analyze last error", Style::default().fg(theme.text)),
+        ]),
+        Line::from(vec![
             Span::styled("  Ctrl+z   ", Style::default().fg(theme.peach)),
             Span::styled("Undo", Style::default().fg(theme.text)),
         ]),
@@ -320,15 +324,34 @@ fn render_install_overlay_with_output(
 ) {
     frame.render_widget(Clear, popup_area);
 
-    // Split into header (progress) and output sections
+    // Render outer border for the entire popup
+    let outer_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.yellow))
+        .title(Span::styled(
+            format!(" {} ", title),
+            Style::default().fg(theme.yellow).bold(),
+        ))
+        .style(Style::default().bg(theme.base));
+    frame.render_widget(outer_block, popup_area);
+
+    // Inner area (inside the border)
+    let inner_area = Rect {
+        x: popup_area.x + 1,
+        y: popup_area.y + 1,
+        width: popup_area.width.saturating_sub(2),
+        height: popup_area.height.saturating_sub(2),
+    };
+
+    // Split inner area into header, output, and footer
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(5), // Header with progress
             Constraint::Min(5),    // Output window
-            Constraint::Length(2), // Footer with hints
+            Constraint::Length(1), // Footer with hints
         ])
-        .split(popup_area);
+        .split(inner_area);
 
     let progress = &app.loading_progress;
 
@@ -346,27 +369,33 @@ fn render_install_overlay_with_output(
         )),
     ];
 
-    let header = Paragraph::new(header_lines)
-        .block(
-            Block::default()
-                .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
-                .border_style(Style::default().fg(theme.yellow))
-                .title(Span::styled(
-                    format!(" {} ", title),
-                    Style::default().fg(theme.yellow).bold(),
-                ))
-                .style(Style::default().bg(theme.base)),
-        )
-        .alignment(Alignment::Center);
+    let header = Paragraph::new(header_lines).alignment(Alignment::Center);
     frame.render_widget(header, chunks[0]);
 
+    // Output window area with padding
+    let output_area = Rect {
+        x: chunks[1].x + 1,
+        y: chunks[1].y,
+        width: chunks[1].width.saturating_sub(2),
+        height: chunks[1].height,
+    };
+
     // Output window - scrollable
-    // Note: Many tools (cargo, etc.) output progress to stderr, so we don't color
-    // all stderr red. Instead, we detect actual error lines by content.
+    // Only process visible lines for performance (cargo can output 1000+ lines)
+    let visible_height = output_area.height.saturating_sub(2) as usize; // Account for borders
+    let max_scroll = app.install_output.len().saturating_sub(visible_height);
+    let scroll_offset = app.install_output_scroll.min(max_scroll);
+
+    // Only style the visible slice of lines
+    let visible_end = (scroll_offset + visible_height + 1).min(app.install_output.len());
     let output_lines: Vec<Line> = app
         .install_output
+        .get(scroll_offset..visible_end)
+        .unwrap_or(&[])
         .iter()
         .map(|line| {
+            // Note: Many tools (cargo, etc.) output progress to stderr, so we don't color
+            // all stderr red. Instead, we detect actual error lines by content.
             let content_lower = line.content.to_lowercase();
             let is_error_line = content_lower.contains("error")
                 || content_lower.contains("failed")
@@ -383,20 +412,14 @@ fn render_install_overlay_with_output(
         })
         .collect();
 
-    let visible_height = chunks[1].height.saturating_sub(2) as usize; // Account for borders
-    let max_scroll = app.install_output.len().saturating_sub(visible_height);
-    let scroll_offset = app.install_output_scroll.min(max_scroll);
+    let output = Paragraph::new(output_lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme.surface1))
+            .style(Style::default().bg(theme.surface0)),
+    );
 
-    let output = Paragraph::new(output_lines)
-        .block(
-            Block::default()
-                .borders(Borders::LEFT | Borders::RIGHT)
-                .border_style(Style::default().fg(theme.surface1))
-                .style(Style::default().bg(theme.surface0)),
-        )
-        .scroll((scroll_offset as u16, 0));
-
-    frame.render_widget(output, chunks[1]);
+    frame.render_widget(output, output_area);
 
     // Scrollbar for output
     if app.install_output.len() > visible_height {
@@ -412,10 +435,10 @@ fn render_install_overlay_with_output(
             ScrollbarState::new(app.install_output.len()).position(scroll_offset);
 
         let scrollbar_area = Rect {
-            x: chunks[1].x + chunks[1].width - 2,
-            y: chunks[1].y + 1,
+            x: output_area.x + output_area.width - 1,
+            y: output_area.y + 1,
             width: 1,
-            height: chunks[1].height.saturating_sub(2),
+            height: output_area.height.saturating_sub(2),
         };
         frame.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
     }
@@ -427,12 +450,6 @@ fn render_install_overlay_with_output(
         Span::styled(" Esc ", Style::default().fg(theme.red)),
         Span::styled("cancel", Style::default().fg(theme.subtext0)),
     ]))
-    .block(
-        Block::default()
-            .borders(Borders::BOTTOM | Borders::LEFT | Borders::RIGHT)
-            .border_style(Style::default().fg(theme.yellow))
-            .style(Style::default().bg(theme.base)),
-    )
     .alignment(Alignment::Center);
     frame.render_widget(footer, chunks[2]);
 }

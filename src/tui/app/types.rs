@@ -58,6 +58,7 @@ pub enum DiscoverSource {
     Npm,
     Apt,
     Homebrew,
+    Go,
     AI,
 }
 
@@ -70,6 +71,7 @@ impl DiscoverSource {
             DiscoverSource::Npm => InstallSource::Npm,
             DiscoverSource::Apt => InstallSource::Apt,
             DiscoverSource::Homebrew => InstallSource::Brew,
+            DiscoverSource::Go => InstallSource::Go,
             DiscoverSource::AI => InstallSource::Unknown,
         }
     }
@@ -82,6 +84,7 @@ impl DiscoverSource {
             DiscoverSource::Npm => "\u{e71e}", //
             DiscoverSource::Apt => "📦",
             DiscoverSource::Homebrew => "🍺",
+            DiscoverSource::Go => "🐹",
             DiscoverSource::AI => "🤖",
         }
     }
@@ -143,11 +146,11 @@ impl ConfigSection {
     /// - Line 11: empty
     /// - Lines 12-19: Theme (header + 7 options)
     /// - Line 20: empty
-    /// - Lines 21-28: Sources (header + 7 options)
-    /// - Line 29: empty
-    /// - Lines 30-32: Usage (header + 2 options)
-    /// - Line 33: empty
-    /// - Line 34: Buttons
+    /// - Lines 21-29: Sources (header + 8 options)
+    /// - Line 30: empty
+    /// - Lines 31-33: Usage (header + 2 options)
+    /// - Line 34: empty
+    /// - Line 35: Buttons
     pub fn start_line(&self, custom_theme_selected: bool) -> usize {
         let theme_extra = if custom_theme_selected { 1 } else { 0 };
         match self {
@@ -155,8 +158,8 @@ impl ConfigSection {
             Self::ClaudeModel => 7,
             Self::Theme => 12,
             Self::Sources => 21 + theme_extra,
-            Self::UsageMode => 30 + theme_extra,
-            Self::Buttons => 34 + theme_extra,
+            Self::UsageMode => 31 + theme_extra,
+            Self::Buttons => 35 + theme_extra,
         }
     }
 
@@ -168,9 +171,9 @@ impl ConfigSection {
             Self::AiProvider => (1, 5),                              // 5 AI providers
             Self::ClaudeModel => (8, 10), // 3 models (Haiku, Sonnet, Opus)
             Self::Theme => (13, 19),      // 7 themes (indices 0-6)
-            Self::Sources => (22 + theme_extra, 28 + theme_extra), // 7 sources
-            Self::UsageMode => (31 + theme_extra, 32 + theme_extra), // 2 modes
-            Self::Buttons => (34 + theme_extra, 34 + theme_extra), // 1 line
+            Self::Sources => (22 + theme_extra, 29 + theme_extra), // 8 sources
+            Self::UsageMode => (32 + theme_extra, 33 + theme_extra), // 2 modes
+            Self::Buttons => (35 + theme_extra, 35 + theme_extra), // 1 line
         }
     }
 
@@ -180,7 +183,7 @@ impl ConfigSection {
             Self::AiProvider => 5,  // None, Claude, Gemini, Codex, Opencode
             Self::ClaudeModel => 3, // Haiku, Sonnet, Opus
             Self::Theme => 7,       // 6 built-in + Custom
-            Self::Sources => 7,     // cargo, apt, pip, npm, brew, flatpak, manual
+            Self::Sources => 8,     // cargo, apt, pip, npm, brew, go, flatpak, manual
             Self::UsageMode => 2,   // Scan, Hook
             Self::Buttons => 2,     // Save, Cancel
         }
@@ -508,6 +511,9 @@ pub enum BackgroundOp {
         current: usize,
         results: Vec<InstallResult>,
     },
+    AnalyzeError {
+        log_path: std::path::PathBuf,
+    },
 }
 
 impl BackgroundOp {
@@ -517,6 +523,7 @@ impl BackgroundOp {
             BackgroundOp::DiscoverSearch { .. } => "Searching",
             BackgroundOp::ExecuteInstall { .. } => "Installing",
             BackgroundOp::ExecuteUpdate { .. } => "Updating",
+            BackgroundOp::AnalyzeError { .. } => "Analyzing Error",
         }
     }
 }
