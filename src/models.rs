@@ -11,6 +11,7 @@ pub enum InstallSource {
     Npm,
     Pip,
     Brew,
+    Go,
     Manual,
     Unknown,
 }
@@ -25,6 +26,7 @@ impl std::fmt::Display for InstallSource {
             Self::Npm => write!(f, "npm"),
             Self::Pip => write!(f, "pip"),
             Self::Brew => write!(f, "brew"),
+            Self::Go => write!(f, "go"),
             Self::Manual => write!(f, "manual"),
             Self::Unknown => write!(f, "unknown"),
         }
@@ -41,6 +43,7 @@ impl From<&str> for InstallSource {
             "npm" => Self::Npm,
             "pip" => Self::Pip,
             "brew" => Self::Brew,
+            "go" => Self::Go,
             "manual" => Self::Manual,
             _ => Self::Unknown,
         }

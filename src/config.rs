@@ -249,6 +249,8 @@ pub struct SourcesConfig {
     pub npm: bool,
     #[serde(default)]
     pub brew: bool,
+    #[serde(default)]
+    pub go: bool,
     #[serde(default = "default_true")]
     pub flatpak: bool,
     #[serde(default = "default_true")]
@@ -267,6 +269,7 @@ impl Default for SourcesConfig {
             pip: false,
             npm: false,
             brew: false,
+            go: false,
             flatpak: true,
             manual: true,
         }
@@ -292,6 +295,9 @@ impl SourcesConfig {
         if self.brew {
             sources.push("brew");
         }
+        if self.go {
+            sources.push("go");
+        }
         if self.flatpak {
             sources.push("flatpak");
         }
@@ -309,6 +315,7 @@ impl SourcesConfig {
             "pip" => self.pip,
             "npm" => self.npm,
             "brew" => self.brew,
+            "go" => self.go,
             "flatpak" => self.flatpak,
             "manual" => self.manual,
             _ => false,
@@ -323,6 +330,7 @@ impl SourcesConfig {
             "pip" => self.pip = !self.pip,
             "npm" => self.npm = !self.npm,
             "brew" => self.brew = !self.brew,
+            "go" => self.go = !self.go,
             "flatpak" => self.flatpak = !self.flatpak,
             "manual" => self.manual = !self.manual,
             _ => {}
@@ -331,7 +339,9 @@ impl SourcesConfig {
 
     /// Get all source names
     pub fn all_sources() -> &'static [&'static str] {
-        &["cargo", "apt", "pip", "npm", "brew", "flatpak", "manual"]
+        &[
+            "cargo", "apt", "pip", "npm", "brew", "go", "flatpak", "manual",
+        ]
     }
 }
 

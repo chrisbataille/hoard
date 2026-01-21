@@ -64,17 +64,24 @@ fn render_discover_search_controls(frame: &mut Frame, app: &App, theme: &Theme, 
     // AI toggle: "[x]🤖" = ~6 chars
     let ai_width = 7u16;
 
-    // Filter chips: each is "F1[x]🦀 " (Fn + checkbox + icon + space) = ~8 chars each
+    // Filter chips: each is "F1[x]🦀 " (Fn + checkbox + icon + space)
+    // Note: emojis display as 2 cells wide in terminal
     let filter_chips_width: u16 = available_sources
         .iter()
         .enumerate()
         .map(|(idx, (_, icon, _))| {
-            // "Fn" (2-3 chars) + "[x]" (3) + icon + space
+            // "Fn" (2-3 chars) + "[x]" (3) + icon (2 for emoji, 1 for nerd font) + space (1)
             let fkey_width = if idx + 1 >= 10 { 3 } else { 2 }; // F1 vs F10
-            (fkey_width + 3 + icon.chars().count() + 1) as u16
+            // Emojis are 2 cells wide, nerd font icons are 1 cell
+            let icon_width = if icon.chars().any(|c| c > '\u{1000}') {
+                2
+            } else {
+                1
+            };
+            (fkey_width + 3 + icon_width + 1) as u16
         })
         .sum::<u16>()
-        + 4; // borders + padding
+        + 2; // borders only (block has 1 char border on each side)
 
     let min_search_width = 20u16;
     let controls_width = ai_width + filter_chips_width;
@@ -250,6 +257,7 @@ fn render_discover_empty_state(frame: &mut Frame, app: &App, theme: &Theme, area
                 "pip" => "Python packages (PyPI)",
                 "brew" => "Homebrew formulae",
                 "apt" => "Debian/Ubuntu packages",
+                "go" => "Go packages (GitHub)",
                 "github" => "GitHub repositories",
                 _ => continue,
             };
@@ -348,14 +356,28 @@ pub fn render_discover_list(frame: &mut Frame, app: &mut App, theme: &Theme, are
         .discover_results
         .iter()
         .map(|result| {
-            let icon = result.source.icon();
+            // Collect unique source icons from all install options
+            let mut icons: Vec<&str> = result
+                .install_options
+                .iter()
+                .map(|opt| opt.source.icon())
+                .collect();
+            // Remove duplicates while preserving order
+            let mut seen = std::collections::HashSet::new();
+            icons.retain(|icon| seen.insert(*icon));
+            // Fall back to primary source if no install options
+            if icons.is_empty() {
+                icons.push(result.source.icon());
+            }
+            let icons_str = icons.join(" ");
+
             let stars_str = result
                 .stars
                 .map(|s| format!(" ★ {}", format_stars(s as i64)))
                 .unwrap_or_default();
 
             let content = Line::from(vec![
-                Span::styled(format!("{} ", icon), Style::default()),
+                Span::styled(format!("{} ", icons_str), Style::default()),
                 Span::styled(&result.name, Style::default().fg(theme.text)),
                 Span::styled(stars_str, Style::default().fg(theme.yellow)),
             ]);
@@ -440,42 +462,69 @@ pub fn render_discover_details(frame: &mut Frame, app: &App, theme: &Theme, area
             lines.push(Line::from(""));
         }
 
+        // Source info section (like GitHub section in installed view)
+        lines.push(Line::from(Span::styled(
+            "Package Info:",
+            Style::default()
+                .fg(theme.subtext0)
+                .add_modifier(Modifier::BOLD),
+        )));
+
         // Source
         let icon = result.source.icon();
         lines.push(Line::from(vec![
-            Span::styled("Source: ", Style::default().fg(theme.subtext0)),
+            Span::styled("  Source: ", Style::default().fg(theme.subtext0)),
             Span::styled(
                 format!("{} {:?}", icon, result.source),
                 Style::default().fg(theme.peach),
             ),
         ]));
 
+        // Language (explicit or inferred from source)
+        let language = result.get_language();
+        if let Some(lang) = language {
+            lines.push(Line::from(vec![
+                Span::styled("  Language: ", Style::default().fg(theme.subtext0)),
+                Span::styled(lang.to_string(), Style::default().fg(theme.peach)),
+            ]));
+        }
+
         // Stars
         if let Some(stars) = result.stars {
             lines.push(Line::from(vec![
-                Span::styled("Stars: ", Style::default().fg(theme.subtext0)),
+                Span::styled("  ★ Stars: ", Style::default().fg(theme.yellow)),
                 Span::styled(
-                    format!("★ {}", format_stars(stars as i64)),
+                    format_stars(stars as i64),
                     Style::default().fg(theme.yellow),
                 ),
             ]));
         }
 
-        // URL
+        // URL / Repo
         if let Some(url) = &result.url {
+            // Try to extract repo info from URL
+            let repo_display = if url.contains("github.com") {
+                url.trim_start_matches("https://github.com/")
+                    .trim_end_matches('/')
+                    .to_string()
+            } else {
+                url.clone()
+            };
             lines.push(Line::from(vec![
-                Span::styled("URL: ", Style::default().fg(theme.subtext0)),
-                Span::styled(url.clone(), Style::default().fg(theme.blue)),
+                Span::styled("  URL: ", Style::default().fg(theme.subtext0)),
+                Span::styled(repo_display, Style::default().fg(theme.blue)),
             ]));
         }
 
         lines.push(Line::from(""));
 
-        // Install options
+        // Install section
         if !result.install_options.is_empty() {
             lines.push(Line::from(Span::styled(
-                "Install commands:",
-                Style::default().fg(theme.subtext0),
+                "Install:",
+                Style::default()
+                    .fg(theme.subtext0)
+                    .add_modifier(Modifier::BOLD),
             )));
             for opt in &result.install_options {
                 let opt_icon = opt.source.icon();
@@ -487,10 +536,8 @@ pub fn render_discover_details(frame: &mut Frame, app: &App, theme: &Theme, area
                     ),
                 ]));
             }
+            lines.push(Line::from(""));
         }
-
-        lines.push(Line::from(""));
-        lines.push(Line::from(""));
 
         // Keyboard hints
         lines.push(Line::from(Span::styled(
@@ -501,7 +548,7 @@ pub fn render_discover_details(frame: &mut Frame, app: &App, theme: &Theme, area
             Span::styled("i", Style::default().fg(theme.mauve)),
             Span::styled(" install  ", Style::default().fg(theme.subtext0)),
             Span::styled("Enter", Style::default().fg(theme.mauve)),
-            Span::styled(" open URL", Style::default().fg(theme.subtext0)),
+            Span::styled(" view README", Style::default().fg(theme.subtext0)),
         ]));
 
         lines

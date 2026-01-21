@@ -82,8 +82,9 @@ impl App {
                         DiscoverSource::PyPI => 2,
                         DiscoverSource::Homebrew => 3,
                         DiscoverSource::Apt => 4,
-                        DiscoverSource::GitHub => 5,
-                        DiscoverSource::AI => 6,
+                        DiscoverSource::Go => 5,
+                        DiscoverSource::GitHub => 6,
+                        DiscoverSource::AI => 7,
                     };
                     source_order(&a.source)
                         .cmp(&source_order(&b.source))
@@ -185,6 +186,9 @@ impl App {
         }
         if config.sources.apt {
             sources.push(("apt", "📋", "apt"));
+        }
+        if config.sources.go {
+            sources.push(("go", "🐹", "go"));
         }
         // GitHub is always available if gh CLI is installed
         if self.gh_available {
@@ -351,6 +355,13 @@ impl App {
                     "pip" => source_names.push("PyPI".to_string()),
                     "brew" => source_names.push("Homebrew".to_string()),
                     "apt" => source_names.push("apt".to_string()),
+                    "go" => {
+                        // Go search is handled via GitHub search with language filter
+                        // We add GitHub to search for Go projects
+                        if self.gh_available {
+                            source_names.push("GitHub".to_string());
+                        }
+                    }
                     "github" => {
                         if self.gh_available {
                             source_names.push("GitHub".to_string());
@@ -441,6 +452,7 @@ impl App {
                     source: r.source,
                     stars: r.stars,
                     url: r.url,
+                    language: r.language,
                     install_options,
                 });
             }
@@ -511,6 +523,7 @@ impl App {
                                 source: r.source,
                                 stars: r.stars,
                                 url: r.url,
+                                language: r.language,
                                 install_options,
                             });
                         }
@@ -646,6 +659,7 @@ impl App {
                 source: r.source,
                 stars: r.stars,
                 url: r.url,
+                language: r.language,
                 install_options,
             });
         }

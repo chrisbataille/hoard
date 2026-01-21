@@ -16,6 +16,7 @@ use super::super::app::{App, ConfigMenuState, ConfigSection};
 use super::super::theme::Theme;
 use super::dialogs::centered_rect;
 use crate::config::{AiProvider, SourcesConfig, TuiTheme};
+use crate::sources::PackageManagerStatus;
 
 /// Create a radio button line for config menu
 fn make_radio_line<'a>(selected: bool, focused: bool, label: String, theme: &Theme) -> Line<'a> {
@@ -34,7 +35,26 @@ fn make_radio_line<'a>(selected: bool, focused: bool, label: String, theme: &The
 }
 
 /// Create a checkbox line for config menu
-fn make_checkbox_line<'a>(checked: bool, focused: bool, label: String, theme: &Theme) -> Line<'a> {
+/// Create a checkbox line for package managers with version info
+/// If unavailable, shows greyed out with "not installed"
+fn make_source_checkbox_line<'a>(
+    checked: bool,
+    focused: bool,
+    label: &str,
+    available: bool,
+    version: Option<&str>,
+    theme: &Theme,
+) -> Line<'a> {
+    if !available {
+        // Unavailable: greyed out with "not installed"
+        let style = Style::default().fg(theme.surface1);
+        return Line::from(vec![
+            Span::styled("  ☐ ", style),
+            Span::styled(format!("{} ", label), style),
+            Span::styled("(not installed)", Style::default().fg(theme.surface0)),
+        ]);
+    }
+
     let mark = if checked { "☑" } else { "☐" };
     let style = if focused {
         Style::default().fg(theme.blue).bold()
@@ -43,10 +63,21 @@ fn make_checkbox_line<'a>(checked: bool, focused: bool, label: String, theme: &T
     } else {
         Style::default().fg(theme.subtext0)
     };
-    Line::from(vec![
+
+    let mut spans = vec![
         Span::styled(format!("  {} ", mark), style),
-        Span::styled(label, style),
-    ])
+        Span::styled(label.to_string(), style),
+    ];
+
+    // Add version info if available
+    if let Some(ver) = version {
+        spans.push(Span::styled(
+            format!(" v{}", ver),
+            Style::default().fg(theme.surface1),
+        ));
+    }
+
+    Line::from(spans)
 }
 
 /// Create a section header line
@@ -181,7 +212,11 @@ fn render_config_theme_section(state: &ConfigMenuState, theme: &Theme) -> Vec<Li
 }
 
 /// Render Package Managers section lines
-fn render_config_sources_section(state: &ConfigMenuState, theme: &Theme) -> Vec<Line<'static>> {
+fn render_config_sources_section(
+    state: &ConfigMenuState,
+    theme: &Theme,
+    package_managers: &PackageManagerStatus,
+) -> Vec<Line<'static>> {
     let sources_focused = state.section == ConfigSection::Sources;
     let mut lines = vec![make_section_header(
         "Package Managers",
@@ -190,15 +225,17 @@ fn render_config_sources_section(state: &ConfigMenuState, theme: &Theme) -> Vec<
     )];
 
     let source_names = SourcesConfig::all_sources();
-    let source_labels = ["Cargo", "Apt", "Pip", "npm", "Brew", "Flatpak", "Manual"];
+    let source_labels = [
+        "Cargo", "Apt", "Pip", "npm", "Brew", "Go", "Flatpak", "Manual",
+    ];
     for (i, (&name, label)) in source_names.iter().zip(source_labels.iter()).enumerate() {
         let checked = state.sources.is_enabled(name);
         let focused = sources_focused && i == state.source_focused;
-        lines.push(make_checkbox_line(
-            checked,
-            focused,
-            label.to_string(),
-            theme,
+        let available = package_managers.is_available(name);
+        let version = package_managers.version(name);
+
+        lines.push(make_source_checkbox_line(
+            checked, focused, label, available, version, theme,
         ));
     }
 
@@ -267,7 +304,11 @@ pub fn render_config_menu(frame: &mut Frame, app: &mut App, theme: &Theme, area:
     lines.extend(render_config_ai_section(state, theme));
     lines.extend(render_config_claude_model_section(state, theme));
     lines.extend(render_config_theme_section(state, theme));
-    lines.extend(render_config_sources_section(state, theme));
+    lines.extend(render_config_sources_section(
+        state,
+        theme,
+        &app.package_managers,
+    ));
     lines.extend(render_config_usage_section(state, theme));
     lines.push(render_config_buttons_section(state, theme));
 

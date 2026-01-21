@@ -10,9 +10,11 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
-use super::super::app::{App, NotificationLevel};
+use super::super::app::{App, BackgroundOp, NotificationLevel, OutputLineType};
 use super::super::theme::Theme;
 use super::dialogs::centered_rect;
+use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState};
 
 /// Render the help overlay
 pub fn render_help_overlay(frame: &mut Frame, theme: &Theme, area: Rect) {
@@ -155,6 +157,10 @@ pub fn render_help_overlay(frame: &mut Frame, theme: &Theme, area: Rect) {
             Span::styled("Cycle theme", Style::default().fg(theme.text)),
         ]),
         Line::from(vec![
+            Span::styled("  a        ", Style::default().fg(theme.mauve)),
+            Span::styled("AI analyze last error", Style::default().fg(theme.text)),
+        ]),
+        Line::from(vec![
             Span::styled("  Ctrl+z   ", Style::default().fg(theme.peach)),
             Span::styled("Undo", Style::default().fg(theme.text)),
         ]),
@@ -213,7 +219,18 @@ pub fn render_help_overlay(frame: &mut Frame, theme: &Theme, area: Rect) {
 
 /// Render the loading overlay
 pub fn render_loading_overlay(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
-    let popup_area = centered_rect(50, 30, area);
+    // Check if this is an install/update operation with output
+    let is_install_op = matches!(
+        app.background_op,
+        Some(BackgroundOp::ExecuteInstall { .. } | BackgroundOp::ExecuteUpdate { .. })
+    );
+
+    // Use larger area for install operations with output window
+    let popup_area = if is_install_op && !app.install_output.is_empty() {
+        centered_rect(70, 60, area)
+    } else {
+        centered_rect(50, 30, area)
+    };
 
     let title = app
         .background_op
@@ -239,6 +256,13 @@ pub fn render_loading_overlay(frame: &mut Frame, app: &App, theme: &Theme, area:
         progress.total_steps
     );
 
+    // For install operations with output, render split layout
+    if is_install_op && !app.install_output.is_empty() {
+        render_install_overlay_with_output(frame, app, theme, popup_area, title, &progress_bar);
+        return;
+    }
+
+    // Standard loading overlay (no output)
     let mut lines = vec![
         Line::from(""),
         Line::from(Span::styled(
@@ -287,6 +311,147 @@ pub fn render_loading_overlay(frame: &mut Frame, app: &App, theme: &Theme, area:
 
     frame.render_widget(Clear, popup_area);
     frame.render_widget(popup, popup_area);
+}
+
+/// Render install overlay with live output window
+fn render_install_overlay_with_output(
+    frame: &mut Frame,
+    app: &App,
+    theme: &Theme,
+    popup_area: Rect,
+    title: &str,
+    progress_bar: &str,
+) {
+    frame.render_widget(Clear, popup_area);
+
+    // Render outer border for the entire popup
+    let outer_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.yellow))
+        .title(Span::styled(
+            format!(" {} ", title),
+            Style::default().fg(theme.yellow).bold(),
+        ))
+        .style(Style::default().bg(theme.base));
+    frame.render_widget(outer_block, popup_area);
+
+    // Inner area (inside the border)
+    let inner_area = Rect {
+        x: popup_area.x + 1,
+        y: popup_area.y + 1,
+        width: popup_area.width.saturating_sub(2),
+        height: popup_area.height.saturating_sub(2),
+    };
+
+    // Split inner area into header, output, and footer
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(5), // Header with progress
+            Constraint::Min(5),    // Output window
+            Constraint::Length(1), // Footer with hints
+        ])
+        .split(inner_area);
+
+    let progress = &app.loading_progress;
+
+    // Header - progress info
+    let header_lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            &progress.step_name,
+            Style::default().fg(theme.blue).bold(),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            progress_bar,
+            Style::default().fg(theme.yellow),
+        )),
+    ];
+
+    let header = Paragraph::new(header_lines).alignment(Alignment::Center);
+    frame.render_widget(header, chunks[0]);
+
+    // Output window area with padding
+    let output_area = Rect {
+        x: chunks[1].x + 1,
+        y: chunks[1].y,
+        width: chunks[1].width.saturating_sub(2),
+        height: chunks[1].height,
+    };
+
+    // Output window - scrollable
+    // Only process visible lines for performance (cargo can output 1000+ lines)
+    let visible_height = output_area.height.saturating_sub(2) as usize; // Account for borders
+    let max_scroll = app.install_output.len().saturating_sub(visible_height);
+    let scroll_offset = app.install_output_scroll.min(max_scroll);
+
+    // Only style the visible slice of lines
+    let visible_end = (scroll_offset + visible_height + 1).min(app.install_output.len());
+    let output_lines: Vec<Line> = app
+        .install_output
+        .get(scroll_offset..visible_end)
+        .unwrap_or(&[])
+        .iter()
+        .map(|line| {
+            // Note: Many tools (cargo, etc.) output progress to stderr, so we don't color
+            // all stderr red. Instead, we detect actual error lines by content.
+            let content_lower = line.content.to_lowercase();
+            let is_error_line = content_lower.contains("error")
+                || content_lower.contains("failed")
+                || content_lower.contains("cannot")
+                || content_lower.contains("not found");
+
+            let color = match line.line_type {
+                OutputLineType::Stdout => theme.text,
+                OutputLineType::Stderr if is_error_line => theme.red,
+                OutputLineType::Stderr => theme.subtext0, // Dimmed for normal stderr
+                OutputLineType::Status => theme.blue,
+            };
+            Line::from(Span::styled(&line.content, Style::default().fg(color)))
+        })
+        .collect();
+
+    let output = Paragraph::new(output_lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme.surface1))
+            .style(Style::default().bg(theme.surface0)),
+    );
+
+    frame.render_widget(output, output_area);
+
+    // Scrollbar for output
+    if app.install_output.len() > visible_height {
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some("▲"))
+            .end_symbol(Some("▼"))
+            .track_symbol(Some("│"))
+            .thumb_symbol("█")
+            .track_style(Style::default().fg(theme.surface0))
+            .thumb_style(Style::default().fg(theme.blue));
+
+        let mut scrollbar_state =
+            ScrollbarState::new(app.install_output.len()).position(scroll_offset);
+
+        let scrollbar_area = Rect {
+            x: output_area.x + output_area.width - 1,
+            y: output_area.y + 1,
+            width: 1,
+            height: output_area.height.saturating_sub(2),
+        };
+        frame.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
+    }
+
+    // Footer - keyboard hints
+    let footer = Paragraph::new(Line::from(vec![
+        Span::styled(" j/k ", Style::default().fg(theme.blue)),
+        Span::styled("scroll ", Style::default().fg(theme.subtext0)),
+        Span::styled(" Esc ", Style::default().fg(theme.red)),
+        Span::styled("cancel", Style::default().fg(theme.subtext0)),
+    ]))
+    .alignment(Alignment::Center);
+    frame.render_widget(footer, chunks[2]);
 }
 
 /// Render toast notifications in top-right corner

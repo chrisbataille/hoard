@@ -25,17 +25,43 @@ pub fn handle_events(app: &mut App, db: &Database) -> Result<()> {
 fn handle_key_event(app: &mut App, key: KeyEvent, db: &Database) {
     // Handle pending action confirmation first
     if app.has_pending_action() {
-        match key.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') => {
-                if let Some(action) = app.confirm_action() {
-                    // Execute the action
-                    execute_action(app, &action, db);
+        // Check if this is a source selection dialog
+        let is_source_selection = matches!(
+            &app.pending_action,
+            Some(PendingAction::DiscoverSelectSource(..))
+        );
+
+        if is_source_selection {
+            // Source selection mode: j/k to navigate, Enter to confirm, Esc to cancel
+            match key.code {
+                KeyCode::Char('j') | KeyCode::Down => {
+                    app.navigate_source_selection(1);
                 }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    app.navigate_source_selection(-1);
+                }
+                KeyCode::Enter => {
+                    app.confirm_source_selection();
+                }
+                KeyCode::Esc => {
+                    app.cancel_action();
+                }
+                _ => {} // Ignore other keys during selection
             }
-            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                app.cancel_action();
+        } else {
+            // Normal confirmation: y to confirm, n/Esc to cancel
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    if let Some(action) = app.confirm_action() {
+                        // Execute the action
+                        execute_action(app, action, db);
+                    }
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                    app.cancel_action();
+                }
+                _ => {} // Ignore other keys during confirmation
             }
-            _ => {} // Ignore other keys during confirmation
         }
         return;
     }
@@ -46,6 +72,50 @@ fn handle_key_event(app: &mut App, key: KeyEvent, db: &Database) {
             app.close_error_modal();
         }
         return;
+    }
+
+    // Handle install/update operation with live output
+    // Check background_op (not install_operation) since the overlay is shown based on background_op
+    let is_install_op = matches!(
+        &app.background_op,
+        Some(super::app::BackgroundOp::ExecuteInstall { .. })
+            | Some(super::app::BackgroundOp::ExecuteUpdate { .. })
+    );
+    if is_install_op {
+        match key.code {
+            KeyCode::Esc => {
+                app.cancel_install();
+                return;
+            }
+            // Scroll output up
+            KeyCode::Char('k') | KeyCode::Up => {
+                app.install_output_scroll = app.install_output_scroll.saturating_sub(1);
+                return;
+            }
+            // Scroll output down - allow scrolling to see all content
+            KeyCode::Char('j') | KeyCode::Down => {
+                if !app.install_output.is_empty() {
+                    let max_scroll = app.install_output.len().saturating_sub(1);
+                    if app.install_output_scroll < max_scroll {
+                        app.install_output_scroll += 1;
+                    }
+                }
+                return;
+            }
+            // Page up/down
+            KeyCode::PageUp => {
+                app.install_output_scroll = app.install_output_scroll.saturating_sub(10);
+                return;
+            }
+            KeyCode::PageDown => {
+                if !app.install_output.is_empty() {
+                    let max_scroll = app.install_output.len().saturating_sub(1);
+                    app.install_output_scroll = (app.install_output_scroll + 10).min(max_scroll);
+                }
+                return;
+            }
+            _ => return, // Ignore other keys during install
+        }
     }
 
     // Handle README popup
@@ -134,6 +204,34 @@ fn handle_key_event(app: &mut App, key: KeyEvent, db: &Database) {
         InputMode::Search => handle_search_mode(app, key, db),
         InputMode::Command => handle_command_mode(app, key, db),
         InputMode::JumpToLetter => handle_jump_mode(app, key),
+        InputMode::Password => handle_password_mode(app, key, db),
+    }
+}
+
+fn handle_password_mode(app: &mut App, key: KeyEvent, db: &Database) {
+    match key.code {
+        KeyCode::Esc => {
+            // Cancel password entry
+            app.password_input.clear();
+            app.pending_sudo_tasks = None;
+            app.input_mode = InputMode::Normal;
+            app.set_status("Install cancelled", false);
+        }
+        KeyCode::Enter => {
+            // Submit password and start install
+            if let Some((tasks, is_update)) = app.pending_sudo_tasks.take() {
+                let password = std::mem::take(&mut app.password_input);
+                app.input_mode = InputMode::Normal;
+                app.start_sudo_install(tasks, is_update, password, db);
+            }
+        }
+        KeyCode::Backspace => {
+            app.password_input.pop();
+        }
+        KeyCode::Char(c) => {
+            app.password_input.push(c);
+        }
+        _ => {}
     }
 }
 
@@ -343,15 +441,17 @@ fn handle_normal_mode(app: &mut App, key: KeyEvent, db: &Database) {
         KeyCode::Char('i') => {
             if app.tab == Tab::Bundles {
                 app.request_bundle_install(db);
+            } else if app.tab == Tab::Discover {
+                app.request_discover_install();
             } else {
-                app.request_install();
+                app.request_install(db);
             }
         }
         KeyCode::Char('a') if app.tab == Tab::Bundles => {
             app.track_bundle_tools(db); // Add missing bundle tools to Available
         }
         KeyCode::Char('D') => app.request_uninstall(), // Shift+d for uninstall (safer)
-        KeyCode::Char('u') => app.request_update(),    // Update tools with available updates
+        KeyCode::Char('u') => app.request_update(db),  // Update tools with available updates
 
         // Details popup (for narrow terminals or quick view)
         // For Discover tab, open README popup
@@ -381,7 +481,7 @@ fn handle_normal_mode(app: &mut App, key: KeyEvent, db: &Database) {
         KeyCode::Char('z') if key.modifiers.contains(KeyModifiers::CONTROL) => app.undo(),
         KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => app.redo(),
 
-        // Refresh (check for updates on Updates tab)
+        // Refresh (r or Ctrl+r - check for updates on Updates tab, refresh tools elsewhere)
         KeyCode::Char('r') => {
             if app.tab == Tab::Updates {
                 // Schedule background operation (main loop will show loading state)
@@ -389,6 +489,11 @@ fn handle_normal_mode(app: &mut App, key: KeyEvent, db: &Database) {
             } else {
                 app.refresh_tools(db);
             }
+        }
+
+        // AI analyze last install error
+        KeyCode::Char('a') => {
+            app.analyze_last_error();
         }
 
         _ => {}
@@ -460,6 +565,28 @@ fn handle_command_mode(app: &mut App, key: KeyEvent, db: &Database) {
 }
 
 fn handle_mouse_event(app: &mut App, mouse: crossterm::event::MouseEvent, _db: &Database) {
+    // Handle install output popup mouse scrolling
+    let is_install_op = matches!(
+        &app.background_op,
+        Some(super::app::BackgroundOp::ExecuteInstall { .. })
+            | Some(super::app::BackgroundOp::ExecuteUpdate { .. })
+    );
+    if is_install_op {
+        match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                app.install_output_scroll = app.install_output_scroll.saturating_sub(3);
+            }
+            MouseEventKind::ScrollDown => {
+                if !app.install_output.is_empty() {
+                    let max_scroll = app.install_output.len().saturating_sub(1);
+                    app.install_output_scroll = (app.install_output_scroll + 3).min(max_scroll);
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+
     // Handle README popup mouse scrolling
     if app.has_readme_popup() {
         match mouse.kind {
@@ -629,30 +756,39 @@ fn handle_config_menu_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) 
 }
 
 /// Execute a confirmed action
-fn execute_action(app: &mut App, action: &PendingAction, db: &Database) {
+fn execute_action(app: &mut App, action: PendingAction, db: &Database) {
+    use super::app::{App as AppType, BackgroundOp};
+
     match action {
-        PendingAction::Install(tools) => {
-            // For now, just show status - actual install requires shell commands
-            // which should be done outside the TUI event loop
-            let count = tools.len();
-            if count == 1 {
-                app.set_status(
-                    format!(
-                        "Install {} - use CLI: hoards install {}",
-                        tools[0], tools[0]
-                    ),
-                    false,
-                );
+        PendingAction::Install(tasks) => {
+            // Check if any task needs sudo (apt/snap)
+            if AppType::tasks_need_sudo(&tasks) {
+                app.prompt_sudo_password(tasks, false);
             } else {
-                app.set_status(
-                    format!("Install {} tools - use CLI for batch install", count),
-                    false,
-                );
+                // Schedule background install operation
+                app.schedule_op(BackgroundOp::ExecuteInstall {
+                    tasks,
+                    current: 0,
+                    results: Vec::new(),
+                });
             }
-            app.clear_selection();
+        }
+        PendingAction::DiscoverInstall(task) => {
+            let tasks = vec![task];
+            // Check if task needs sudo (apt/snap)
+            if AppType::tasks_need_sudo(&tasks) {
+                app.prompt_sudo_password(tasks, false);
+            } else {
+                // Schedule background install operation
+                app.schedule_op(BackgroundOp::ExecuteInstall {
+                    tasks,
+                    current: 0,
+                    results: Vec::new(),
+                });
+            }
         }
         PendingAction::Uninstall(tools) => {
-            // For now, just show status - actual uninstall requires shell commands
+            // Uninstall still uses CLI for now (requires confirmation per tool)
             let count = tools.len();
             if count == 1 {
                 app.set_status(
@@ -669,24 +805,24 @@ fn execute_action(app: &mut App, action: &PendingAction, db: &Database) {
                 );
             }
             app.clear_selection();
+            app.refresh_tools(db);
         }
-        PendingAction::Update(tools) => {
-            // For now, just show status - actual upgrade requires shell commands
-            let count = tools.len();
-            if count == 1 {
-                app.set_status(
-                    format!("Update {} - use CLI: hoards upgrade {}", tools[0], tools[0]),
-                    false,
-                );
+        PendingAction::Update(tasks) => {
+            // Check if any task needs sudo (apt/snap)
+            if AppType::tasks_need_sudo(&tasks) {
+                app.prompt_sudo_password(tasks, true);
             } else {
-                app.set_status(
-                    format!("Update {} tools - use CLI for batch upgrade", count),
-                    false,
-                );
+                // Schedule background update operation
+                app.schedule_op(BackgroundOp::ExecuteUpdate {
+                    tasks,
+                    current: 0,
+                    results: Vec::new(),
+                });
             }
-            app.clear_selection();
+        }
+        PendingAction::DiscoverSelectSource(..) => {
+            // Source selection is handled by key events (j/k to navigate, Enter to confirm)
+            // This should not be called directly
         }
     }
-    // Refresh tools list after action
-    app.refresh_tools(db);
 }

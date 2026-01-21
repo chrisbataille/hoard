@@ -6,7 +6,9 @@
 mod apt;
 mod brew;
 mod cargo;
+mod detection;
 mod flatpak;
+mod go;
 mod manual;
 mod npm;
 mod pip;
@@ -14,7 +16,9 @@ mod pip;
 pub use apt::AptSource;
 pub use brew::BrewSource;
 pub use cargo::CargoSource;
+pub use detection::{PackageManagerInfo, PackageManagerStatus};
 pub use flatpak::FlatpakSource;
+pub use go::GoSource;
 pub use manual::ManualSource;
 pub use npm::NpmSource;
 pub use pip::PipSource;
@@ -68,6 +72,7 @@ pub fn all_sources() -> Vec<Box<dyn PackageSource>> {
         Box::new(NpmSource),
         Box::new(BrewSource),
         Box::new(AptSource),
+        Box::new(GoSource),
         Box::new(FlatpakSource),
         Box::new(ManualSource),
     ]
@@ -81,6 +86,7 @@ pub fn get_source(name: &str) -> Option<Box<dyn PackageSource>> {
         "npm" => Some(Box::new(NpmSource)),
         "brew" => Some(Box::new(BrewSource)),
         "apt" => Some(Box::new(AptSource)),
+        "go" => Some(Box::new(GoSource)),
         "flatpak" => Some(Box::new(FlatpakSource)),
         "manual" => Some(Box::new(ManualSource)),
         _ => None,
@@ -95,6 +101,7 @@ pub fn source_for(install_source: &InstallSource) -> Option<Box<dyn PackageSourc
         InstallSource::Npm => Some(Box::new(NpmSource)),
         InstallSource::Brew => Some(Box::new(BrewSource)),
         InstallSource::Apt => Some(Box::new(AptSource)),
+        InstallSource::Go => Some(Box::new(GoSource)),
         InstallSource::Flatpak => Some(Box::new(FlatpakSource)),
         InstallSource::Manual => Some(Box::new(ManualSource)),
         _ => None,
@@ -110,7 +117,7 @@ mod tests {
     #[test]
     fn test_all_sources_returns_expected_count() {
         let sources = all_sources();
-        assert_eq!(sources.len(), 7);
+        assert_eq!(sources.len(), 8);
     }
 
     #[test]
@@ -135,6 +142,7 @@ mod tests {
         assert!(names.contains(&"npm"));
         assert!(names.contains(&"brew"));
         assert!(names.contains(&"apt"));
+        assert!(names.contains(&"go"));
         assert!(names.contains(&"flatpak"));
         assert!(names.contains(&"manual"));
     }
@@ -148,6 +156,7 @@ mod tests {
         assert!(get_source("npm").is_some());
         assert!(get_source("brew").is_some());
         assert!(get_source("apt").is_some());
+        assert!(get_source("go").is_some());
         assert!(get_source("flatpak").is_some());
         assert!(get_source("manual").is_some());
     }
@@ -175,6 +184,7 @@ mod tests {
         assert!(source_for(&InstallSource::Npm).is_some());
         assert!(source_for(&InstallSource::Brew).is_some());
         assert!(source_for(&InstallSource::Apt).is_some());
+        assert!(source_for(&InstallSource::Go).is_some());
         assert!(source_for(&InstallSource::Flatpak).is_some());
         assert!(source_for(&InstallSource::Manual).is_some());
     }
@@ -268,6 +278,19 @@ mod tests {
             "flatpak uninstall -y org.mozilla.firefox"
         );
         assert!(source.supports_updates());
+    }
+
+    #[test]
+    fn test_go_source_properties() {
+        let source = GoSource;
+        assert_eq!(source.name(), "go");
+        assert_eq!(source.install_source(), InstallSource::Go);
+        assert_eq!(
+            source.install_command("github.com/user/tool"),
+            "go install github.com/user/tool@latest"
+        );
+        assert!(source.uninstall_command("tool").contains("rm"));
+        assert!(!source.supports_updates());
     }
 
     #[test]

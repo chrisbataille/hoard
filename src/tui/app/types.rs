@@ -8,7 +8,7 @@ use crate::config::{AiProvider, ClaudeModel, HoardConfig, SourcesConfig, TuiThem
 use crate::models::InstallSource;
 
 /// An install option for a discovered tool
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstallOption {
     pub source: DiscoverSource,
     pub install_command: String,
@@ -22,6 +22,7 @@ pub struct DiscoverResult {
     pub source: DiscoverSource,
     pub stars: Option<u64>,
     pub url: Option<String>,
+    pub language: Option<String>,
     pub install_options: Vec<InstallOption>,
 }
 
@@ -31,6 +32,20 @@ impl DiscoverResult {
         self.install_options
             .first()
             .map(|o| o.install_command.as_str())
+    }
+
+    /// Get the language (explicit or inferred from source)
+    pub fn get_language(&self) -> Option<&str> {
+        if let Some(lang) = &self.language {
+            return Some(lang);
+        }
+        // Infer from source
+        match self.source {
+            DiscoverSource::CratesIo => Some("Rust"),
+            DiscoverSource::PyPI => Some("Python"),
+            DiscoverSource::Npm => Some("JavaScript"),
+            _ => None,
+        }
     }
 }
 
@@ -43,6 +58,7 @@ pub enum DiscoverSource {
     Npm,
     Apt,
     Homebrew,
+    Go,
     AI,
 }
 
@@ -55,6 +71,7 @@ impl DiscoverSource {
             DiscoverSource::Npm => InstallSource::Npm,
             DiscoverSource::Apt => InstallSource::Apt,
             DiscoverSource::Homebrew => InstallSource::Brew,
+            DiscoverSource::Go => InstallSource::Go,
             DiscoverSource::AI => InstallSource::Unknown,
         }
     }
@@ -67,6 +84,7 @@ impl DiscoverSource {
             DiscoverSource::Npm => "\u{e71e}", //
             DiscoverSource::Apt => "📦",
             DiscoverSource::Homebrew => "🍺",
+            DiscoverSource::Go => "🐹",
             DiscoverSource::AI => "🤖",
         }
     }
@@ -128,11 +146,11 @@ impl ConfigSection {
     /// - Line 11: empty
     /// - Lines 12-19: Theme (header + 7 options)
     /// - Line 20: empty
-    /// - Lines 21-28: Sources (header + 7 options)
-    /// - Line 29: empty
-    /// - Lines 30-32: Usage (header + 2 options)
-    /// - Line 33: empty
-    /// - Line 34: Buttons
+    /// - Lines 21-29: Sources (header + 8 options)
+    /// - Line 30: empty
+    /// - Lines 31-33: Usage (header + 2 options)
+    /// - Line 34: empty
+    /// - Line 35: Buttons
     pub fn start_line(&self, custom_theme_selected: bool) -> usize {
         let theme_extra = if custom_theme_selected { 1 } else { 0 };
         match self {
@@ -140,8 +158,8 @@ impl ConfigSection {
             Self::ClaudeModel => 7,
             Self::Theme => 12,
             Self::Sources => 21 + theme_extra,
-            Self::UsageMode => 30 + theme_extra,
-            Self::Buttons => 34 + theme_extra,
+            Self::UsageMode => 31 + theme_extra,
+            Self::Buttons => 35 + theme_extra,
         }
     }
 
@@ -153,9 +171,9 @@ impl ConfigSection {
             Self::AiProvider => (1, 5),                              // 5 AI providers
             Self::ClaudeModel => (8, 10), // 3 models (Haiku, Sonnet, Opus)
             Self::Theme => (13, 19),      // 7 themes (indices 0-6)
-            Self::Sources => (22 + theme_extra, 28 + theme_extra), // 7 sources
-            Self::UsageMode => (31 + theme_extra, 32 + theme_extra), // 2 modes
-            Self::Buttons => (34 + theme_extra, 34 + theme_extra), // 1 line
+            Self::Sources => (22 + theme_extra, 29 + theme_extra), // 8 sources
+            Self::UsageMode => (32 + theme_extra, 33 + theme_extra), // 2 modes
+            Self::Buttons => (35 + theme_extra, 35 + theme_extra), // 1 line
         }
     }
 
@@ -165,7 +183,7 @@ impl ConfigSection {
             Self::AiProvider => 5,  // None, Claude, Gemini, Codex, Opencode
             Self::ClaudeModel => 3, // Haiku, Sonnet, Opus
             Self::Theme => 7,       // 6 built-in + Custom
-            Self::Sources => 7,     // cargo, apt, pip, npm, brew, flatpak, manual
+            Self::Sources => 8,     // cargo, apt, pip, npm, brew, go, flatpak, manual
             Self::UsageMode => 2,   // Scan, Hook
             Self::Buttons => 2,     // Save, Cancel
         }
@@ -433,6 +451,43 @@ pub enum InputMode {
     Search,
     Command,      // Vim-style command palette with ':'
     JumpToLetter, // Waiting for letter input to jump to
+    Password,     // Entering sudo password (masked input)
+}
+
+/// Info needed to install/update a tool
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstallTask {
+    pub name: String,
+    pub source: String,          // "cargo", "pip", etc.
+    pub version: Option<String>, // Target version for updates
+    pub display_command: String, // For confirmation dialog
+    // Optional metadata from Discover (for syncing to database)
+    pub description: Option<String>,
+    pub stars: Option<u64>,
+    pub url: Option<String>,
+}
+
+/// Result of an install/update attempt
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstallResult {
+    pub name: String,
+    pub success: bool,
+    pub error: Option<String>,
+}
+
+/// Type of output line from install command
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputLineType {
+    Stdout,
+    Stderr,
+    Status, // Internal status messages (e.g., "Starting...")
+}
+
+/// A line of output from an install/update command
+#[derive(Debug, Clone)]
+pub struct OutputLine {
+    pub line_type: OutputLineType,
+    pub content: String,
 }
 
 /// Background operation that needs loading indicator
@@ -446,6 +501,19 @@ pub enum BackgroundOp {
         step: usize,
         source_names: Vec<String>,
     },
+    ExecuteInstall {
+        tasks: Vec<InstallTask>,
+        current: usize,
+        results: Vec<InstallResult>,
+    },
+    ExecuteUpdate {
+        tasks: Vec<InstallTask>,
+        current: usize,
+        results: Vec<InstallResult>,
+    },
+    AnalyzeError {
+        log_path: std::path::PathBuf,
+    },
 }
 
 impl BackgroundOp {
@@ -453,6 +521,9 @@ impl BackgroundOp {
         match self {
             BackgroundOp::CheckUpdates { .. } => "Checking for Updates",
             BackgroundOp::DiscoverSearch { .. } => "Searching",
+            BackgroundOp::ExecuteInstall { .. } => "Installing",
+            BackgroundOp::ExecuteUpdate { .. } => "Updating",
+            BackgroundOp::AnalyzeError { .. } => "Analyzing Error",
         }
     }
 }
@@ -475,22 +546,33 @@ pub const PACKAGE_MANAGERS: &[(&str, &str)] = &[
     ("brew", "Homebrew"),
 ];
 
+/// Metadata from Discover for syncing to database after install
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DiscoverMetadata {
+    pub description: Option<String>,
+    pub stars: Option<u64>,
+    pub url: Option<String>,
+}
+
 /// Pending action requiring confirmation
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PendingAction {
-    Install(Vec<String>),   // Tool names to install
-    Uninstall(Vec<String>), // Tool names to uninstall
-    Update(Vec<String>),    // Tool names to update
+    Install(Vec<InstallTask>),    // Tools to install (with metadata)
+    Uninstall(Vec<String>),       // Tool names to uninstall
+    Update(Vec<InstallTask>),     // Tools to update (with metadata)
+    DiscoverInstall(InstallTask), // Single discover install
+    /// Select source for multi-source discover install (name, options, selected_index, metadata)
+    DiscoverSelectSource(String, Vec<InstallOption>, usize, DiscoverMetadata),
 }
 
 impl PendingAction {
     pub fn description(&self) -> String {
         match self {
-            PendingAction::Install(tools) => {
-                if tools.len() == 1 {
-                    format!("Install {}?", tools[0])
+            PendingAction::Install(tasks) => {
+                if tasks.len() == 1 {
+                    format!("Install {}?", tasks[0].name)
                 } else {
-                    format!("Install {} tools?", tools.len())
+                    format!("Install {} tools?", tasks.len())
                 }
             }
             PendingAction::Uninstall(tools) => {
@@ -500,19 +582,40 @@ impl PendingAction {
                     format!("Uninstall {} tools?", tools.len())
                 }
             }
-            PendingAction::Update(tools) => {
-                if tools.len() == 1 {
-                    format!("Update {}?", tools[0])
+            PendingAction::Update(tasks) => {
+                if tasks.len() == 1 {
+                    format!("Update {}?", tasks[0].name)
                 } else {
-                    format!("Update {} tools?", tools.len())
+                    format!("Update {} tools?", tasks.len())
                 }
+            }
+            PendingAction::DiscoverInstall(task) => {
+                format!("Install {}?", task.name)
+            }
+            PendingAction::DiscoverSelectSource(name, ..) => {
+                format!("Select install source for {}", name)
             }
         }
     }
 
-    pub fn tools(&self) -> &[String] {
+    /// Get tool names for display
+    pub fn tool_names(&self) -> Vec<&str> {
         match self {
-            PendingAction::Install(t) | PendingAction::Uninstall(t) | PendingAction::Update(t) => t,
+            PendingAction::Install(tasks) => tasks.iter().map(|t| t.name.as_str()).collect(),
+            PendingAction::Uninstall(tools) => tools.iter().map(|s| s.as_str()).collect(),
+            PendingAction::Update(tasks) => tasks.iter().map(|t| t.name.as_str()).collect(),
+            PendingAction::DiscoverInstall(task) => vec![task.name.as_str()],
+            PendingAction::DiscoverSelectSource(name, ..) => vec![name.as_str()],
+        }
+    }
+
+    /// Get install tasks (for Install/Update/DiscoverInstall)
+    pub fn install_tasks(&self) -> Option<Vec<&InstallTask>> {
+        match self {
+            PendingAction::Install(tasks) => Some(tasks.iter().collect()),
+            PendingAction::Update(tasks) => Some(tasks.iter().collect()),
+            PendingAction::DiscoverInstall(task) => Some(vec![task]),
+            PendingAction::Uninstall(_) | PendingAction::DiscoverSelectSource(..) => None,
         }
     }
 }

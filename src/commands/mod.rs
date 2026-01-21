@@ -21,8 +21,9 @@ pub mod workflow;
 // Re-export commonly used items from install
 pub use install::{
     ProcessAction, SafeCommand, cmd_install, cmd_uninstall, cmd_upgrade, get_install_command,
-    get_install_command_versioned, get_safe_install_command, get_safe_uninstall_command,
-    handle_running_process, validate_binary_name, validate_package_name, validate_version,
+    get_install_command_versioned, get_safe_install_command, get_safe_install_command_with_url,
+    get_safe_uninstall_command, handle_running_process, validate_binary_name,
+    validate_package_name, validate_version,
 };
 
 // Re-export core commands

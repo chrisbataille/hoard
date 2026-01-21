@@ -71,20 +71,64 @@ fn build_normal_mode_footer(app: &App, theme: &Theme) -> Vec<Span<'static>> {
         return build_discover_footer(app, theme);
     }
 
+    // Tab-specific hints
     let mut spans = vec![
         Span::styled(" j/k", Style::default().fg(theme.blue)),
         Span::styled(" nav ", Style::default().fg(theme.subtext0)),
-        Span::styled(" Space", Style::default().fg(theme.blue)),
-        Span::styled(" select ", Style::default().fg(theme.subtext0)),
-        Span::styled(" i", Style::default().fg(theme.green)),
-        Span::styled(" install ", Style::default().fg(theme.subtext0)),
-        Span::styled(" D", Style::default().fg(theme.red)),
-        Span::styled(" uninstall ", Style::default().fg(theme.subtext0)),
-        Span::styled(" u", Style::default().fg(theme.yellow)),
-        Span::styled(" update ", Style::default().fg(theme.subtext0)),
+    ];
+
+    match app.tab {
+        Tab::Installed => {
+            spans.extend([
+                Span::styled(" Space", Style::default().fg(theme.blue)),
+                Span::styled(" select ", Style::default().fg(theme.subtext0)),
+                Span::styled(" D", Style::default().fg(theme.red)),
+                Span::styled(" uninstall ", Style::default().fg(theme.subtext0)),
+                Span::styled(" u", Style::default().fg(theme.yellow)),
+                Span::styled(" update ", Style::default().fg(theme.subtext0)),
+                Span::styled(" Ctrl+r", Style::default().fg(theme.blue)),
+                Span::styled(" refresh ", Style::default().fg(theme.subtext0)),
+            ]);
+        }
+        Tab::Available => {
+            spans.extend([
+                Span::styled(" Space", Style::default().fg(theme.blue)),
+                Span::styled(" select ", Style::default().fg(theme.subtext0)),
+                Span::styled(" i", Style::default().fg(theme.green)),
+                Span::styled(" install ", Style::default().fg(theme.subtext0)),
+                Span::styled(" Ctrl+r", Style::default().fg(theme.blue)),
+                Span::styled(" refresh ", Style::default().fg(theme.subtext0)),
+            ]);
+        }
+        Tab::Updates => {
+            spans.extend([
+                Span::styled(" Space", Style::default().fg(theme.blue)),
+                Span::styled(" select ", Style::default().fg(theme.subtext0)),
+                Span::styled(" u", Style::default().fg(theme.yellow)),
+                Span::styled(" update ", Style::default().fg(theme.subtext0)),
+                Span::styled(" U", Style::default().fg(theme.yellow).bold()),
+                Span::styled(" update all ", Style::default().fg(theme.subtext0)),
+                Span::styled(" Ctrl+r", Style::default().fg(theme.blue)),
+                Span::styled(" check ", Style::default().fg(theme.subtext0)),
+            ]);
+        }
+        Tab::Bundles => {
+            spans.extend([
+                Span::styled(" Space", Style::default().fg(theme.blue)),
+                Span::styled(" select ", Style::default().fg(theme.subtext0)),
+                Span::styled(" i", Style::default().fg(theme.green)),
+                Span::styled(" install ", Style::default().fg(theme.subtext0)),
+                Span::styled(" D", Style::default().fg(theme.red)),
+                Span::styled(" delete ", Style::default().fg(theme.subtext0)),
+            ]);
+        }
+        Tab::Discover => unreachable!(), // Handled above
+    }
+
+    spans.extend([
         Span::styled(" ?", Style::default().fg(theme.blue)),
         Span::styled(" help", Style::default().fg(theme.subtext0)),
-    ];
+    ]);
 
     if app.selection_count() > 0 {
         spans.push(Span::styled(" │ ", Style::default().fg(theme.surface1)));
@@ -129,6 +173,8 @@ fn build_discover_footer(app: &App, theme: &Theme) -> Vec<Span<'static>> {
     }
 
     spans.extend([
+        Span::styled(" i", Style::default().fg(theme.green)),
+        Span::styled(" install ", Style::default().fg(theme.subtext0)),
         Span::styled(" Enter", Style::default().fg(theme.blue)),
         Span::styled(" readme ", Style::default().fg(theme.subtext0)),
         Span::styled(" ?", Style::default().fg(theme.blue)),
@@ -269,6 +315,21 @@ fn build_jump_mode_footer(theme: &Theme) -> Vec<Span<'static>> {
     ]
 }
 
+/// Build footer content for Password mode (sudo)
+fn build_password_mode_footer(app: &App, theme: &Theme) -> Vec<Span<'static>> {
+    // Show masked password input
+    let masked = "*".repeat(app.password_input.len());
+    vec![
+        Span::styled(" 🔒 Password: ", Style::default().fg(theme.yellow).bold()),
+        Span::styled(masked, Style::default().fg(theme.text)),
+        Span::styled("█", Style::default().fg(theme.blue)), // Cursor
+        Span::styled("  Enter", Style::default().fg(theme.blue)),
+        Span::styled(" confirm  ", Style::default().fg(theme.subtext0)),
+        Span::styled("Esc", Style::default().fg(theme.blue)),
+        Span::styled(" cancel", Style::default().fg(theme.subtext0)),
+    ]
+}
+
 /// Render the footer bar
 pub fn render_footer(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let (right_status, right_width) = build_footer_right_status(app, theme);
@@ -306,6 +367,7 @@ pub fn render_footer(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         InputMode::Search => build_search_mode_footer(app, theme),
         InputMode::Command => build_command_mode_footer(app, theme),
         InputMode::JumpToLetter => build_jump_mode_footer(theme),
+        InputMode::Password => build_password_mode_footer(app, theme),
     };
 
     let chunks = Layout::default()

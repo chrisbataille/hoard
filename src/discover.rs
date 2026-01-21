@@ -27,6 +27,7 @@ pub struct DiscoverResult {
     pub source: DiscoverSource,
     pub stars: Option<u64>,
     pub url: Option<String>,
+    pub language: Option<String>,
     pub install_options: Vec<InstallOption>,
 }
 
@@ -44,6 +45,7 @@ impl DiscoverResult {
             source: source.clone(),
             stars: None,
             url: None,
+            language: None,
             install_options: vec![InstallOption {
                 source,
                 install_command,
@@ -60,6 +62,12 @@ impl DiscoverResult {
     /// Add URL to the result
     pub fn with_url(mut self, url: String) -> Self {
         self.url = Some(url);
+        self
+    }
+
+    /// Add language to the result
+    pub fn with_language(mut self, language: String) -> Self {
+        self.language = Some(language);
         self
     }
 }
@@ -92,10 +100,12 @@ impl SearchSource for CratesIoSearch {
     }
 
     fn search(&self, query: &str, limit: usize) -> Result<Vec<DiscoverResult>> {
+        // Fetch more results than needed to filter out library-only crates
+        let fetch_limit = limit * 3;
         let url = format!(
             "https://crates.io/api/v1/crates?q={}&per_page={}",
             urlencoding::encode(query),
-            limit
+            fetch_limit
         );
 
         let mut response = HTTP_AGENT
@@ -108,7 +118,7 @@ impl SearchSource for CratesIoSearch {
             .context("Failed to parse crates.io response")?;
 
         let empty_vec = vec![];
-        let crates = response["crates"]
+        let candidates: Vec<_> = response["crates"]
             .as_array()
             .unwrap_or(&empty_vec)
             .iter()
@@ -116,21 +126,90 @@ impl SearchSource for CratesIoSearch {
                 let name = c["name"].as_str()?.to_string();
                 let description = c["description"].as_str().map(String::from);
                 let downloads = c["downloads"].as_u64().unwrap_or(0);
-
-                Some(
-                    DiscoverResult::new(
-                        name.clone(),
-                        description,
-                        DiscoverSource::CratesIo,
-                        format!("cargo install {}", name),
-                    )
-                    .with_stars(downloads / 1000) // Use downloads/1000 as pseudo-stars
-                    .with_url(format!("https://crates.io/crates/{}", name)),
-                )
+                // Get repository URL (usually GitHub)
+                let repository = c["repository"].as_str().map(String::from);
+                Some((name, description, downloads, repository))
             })
             .collect();
 
+        // Check each crate for binaries (in parallel for speed)
+        let crates: Vec<_> = std::thread::scope(|s| {
+            let handles: Vec<_> = candidates
+                .iter()
+                .map(|(name, description, downloads, repository)| {
+                    let name = name.clone();
+                    let description = description.clone();
+                    let downloads = *downloads;
+                    let repository = repository.clone();
+                    s.spawn(move || {
+                        if crate_has_binaries(&name) == Some(true) {
+                            let mut result = DiscoverResult::new(
+                                name.clone(),
+                                description,
+                                DiscoverSource::CratesIo,
+                                format!("cargo install {}", name),
+                            )
+                            .with_stars(downloads / 1000);
+                            // Use repository URL if available (usually GitHub), otherwise crates.io
+                            if let Some(repo) = repository {
+                                result = result.with_url(repo);
+                            } else {
+                                result =
+                                    result.with_url(format!("https://crates.io/crates/{}", name));
+                            }
+                            Some(result)
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .collect();
+
+            handles
+                .into_iter()
+                .filter_map(|h| h.join().ok().flatten())
+                .take(limit)
+                .collect()
+        });
+
         Ok(crates)
+    }
+}
+
+/// Check if a crate has binaries by fetching its details from crates.io
+/// Returns Some(true) if crate exists and has binaries
+/// Returns Some(false) if crate exists but has no binaries
+/// Returns None if crate doesn't exist (404)
+fn crate_has_binaries(name: &str) -> Option<bool> {
+    let url = format!("https://crates.io/api/v1/crates/{}", name);
+
+    let response = match HTTP_AGENT.get(&url).call() {
+        Ok(resp) => resp,
+        Err(ureq::Error::StatusCode(404)) => {
+            // Package doesn't exist on crates.io
+            return None;
+        }
+        Err(_) => {
+            // Network error - can't determine, assume it might have binaries
+            return Some(true);
+        }
+    };
+
+    let Ok(data): Result<serde_json::Value, _> = response.into_body().read_json() else {
+        return Some(true);
+    };
+
+    // Check if newest version has binaries
+    // The API returns versions array, check the first (newest) one
+    let empty_vec = vec![];
+    let versions = data["versions"].as_array().unwrap_or(&empty_vec);
+
+    if let Some(latest) = versions.first() {
+        let bin_names = latest["bin_names"].as_array().unwrap_or(&empty_vec);
+        Some(!bin_names.is_empty())
+    } else {
+        // No versions found, assume it might have binaries
+        Some(true)
     }
 }
 
@@ -150,10 +229,12 @@ impl SearchSource for NpmSearch {
     }
 
     fn search(&self, query: &str, limit: usize) -> Result<Vec<DiscoverResult>> {
+        // Fetch more results to filter out library-only packages
+        let fetch_limit = limit * 3;
         let url = format!(
             "https://registry.npmjs.org/-/v1/search?text={}&size={}",
             urlencoding::encode(query),
-            limit
+            fetch_limit
         );
 
         let mut response = HTTP_AGENT
@@ -166,7 +247,7 @@ impl SearchSource for NpmSearch {
             .context("Failed to parse npm response")?;
 
         let empty_vec = vec![];
-        let packages = response["objects"]
+        let candidates: Vec<_> = response["objects"]
             .as_array()
             .unwrap_or(&empty_vec)
             .iter()
@@ -174,25 +255,77 @@ impl SearchSource for NpmSearch {
                 let pkg = &obj["package"];
                 let name = pkg["name"].as_str()?.to_string();
                 let description = pkg["description"].as_str().map(String::from);
-
-                // Use search score as a proxy for popularity
                 let score = obj["score"]["final"].as_f64().unwrap_or(0.0);
-                let pseudo_stars = (score * 1000.0) as u64;
-
-                Some(
-                    DiscoverResult::new(
-                        name.clone(),
-                        description,
-                        DiscoverSource::Npm,
-                        format!("npm install -g {}", name),
-                    )
-                    .with_stars(pseudo_stars)
-                    .with_url(format!("https://www.npmjs.com/package/{}", name)),
-                )
+                Some((name, description, score))
             })
             .collect();
 
+        // Check each package for CLI binaries (in parallel)
+        let packages: Vec<_> = std::thread::scope(|s| {
+            let handles: Vec<_> = candidates
+                .iter()
+                .map(|(name, description, score)| {
+                    let name = name.clone();
+                    let description = description.clone();
+                    let score = *score;
+                    s.spawn(move || {
+                        if npm_package_has_bin(&name) {
+                            let pseudo_stars = (score * 1000.0) as u64;
+                            Some(
+                                DiscoverResult::new(
+                                    name.clone(),
+                                    description,
+                                    DiscoverSource::Npm,
+                                    format!("npm install -g {}", name),
+                                )
+                                .with_stars(pseudo_stars)
+                                .with_url(format!("https://www.npmjs.com/package/{}", name)),
+                            )
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .collect();
+
+            handles
+                .into_iter()
+                .filter_map(|h| h.join().ok().flatten())
+                .take(limit)
+                .collect()
+        });
+
         Ok(packages)
+    }
+}
+
+/// Check if an npm package has CLI binaries
+fn npm_package_has_bin(name: &str) -> bool {
+    let url = format!("https://registry.npmjs.org/{}", urlencoding::encode(name));
+
+    let response = match HTTP_AGENT.get(&url).call() {
+        Ok(resp) => resp,
+        Err(ureq::Error::StatusCode(404)) => {
+            // Package doesn't exist on npm
+            return false;
+        }
+        Err(_) => {
+            // Network error - can't determine, assume it might have bin
+            return true;
+        }
+    };
+
+    let Ok(data): Result<serde_json::Value, _> = response.into_body().read_json() else {
+        return true;
+    };
+
+    // Check if package has bin field (can be string or object)
+    let latest_version = data["dist-tags"]["latest"].as_str().unwrap_or("");
+    if let Some(version_data) = data["versions"].get(latest_version) {
+        // bin can be a string (single binary) or object (multiple binaries)
+        version_data.get("bin").is_some()
+    } else {
+        true // Can't determine, include it
     }
 }
 
@@ -213,6 +346,8 @@ impl SearchSource for PyPISearch {
 
     fn search(&self, query: &str, limit: usize) -> Result<Vec<DiscoverResult>> {
         // PyPI doesn't have a proper search API, so we scrape the search page
+        // Fetch more results to filter out library-only packages
+        let fetch_limit = limit * 3;
         let url = format!(
             "https://pypi.org/search/?q={}&o=",
             urlencoding::encode(query)
@@ -228,11 +363,6 @@ impl SearchSource for PyPISearch {
             .context("Failed to read PyPI response")?;
 
         // Parse HTML to extract package names and descriptions
-        // This is a simple regex-based extraction
-        let mut results = Vec::new();
-
-        // Match package names from search results
-        // Pattern: <span class="package-snippet__name">name</span>
         let name_re =
             regex::Regex::new(r#"class="package-snippet__name"[^>]*>([^<]+)</span>"#).unwrap();
         let desc_re =
@@ -240,11 +370,13 @@ impl SearchSource for PyPISearch {
 
         let names: Vec<String> = name_re
             .captures_iter(&response)
+            .take(fetch_limit)
             .map(|c| c[1].trim().to_string())
             .collect();
 
         let descriptions: Vec<Option<String>> = desc_re
             .captures_iter(&response)
+            .take(fetch_limit)
             .map(|c| {
                 let desc = c[1].trim();
                 if desc.is_empty() {
@@ -255,21 +387,127 @@ impl SearchSource for PyPISearch {
             })
             .collect();
 
-        for (i, name) in names.into_iter().take(limit).enumerate() {
-            let description = descriptions.get(i).cloned().flatten();
-            results.push(
-                DiscoverResult::new(
-                    name.clone(),
-                    description,
-                    DiscoverSource::PyPI,
-                    format!("pip install {}", name),
-                )
-                .with_url(format!("https://pypi.org/project/{}/", name)),
-            );
-        }
+        // Pair names with descriptions
+        let candidates: Vec<_> = names
+            .into_iter()
+            .enumerate()
+            .map(|(i, name)| {
+                let description = descriptions.get(i).cloned().flatten();
+                (name, description)
+            })
+            .collect();
+
+        // Check each package for CLI entry points (in parallel)
+        let results: Vec<_> = std::thread::scope(|s| {
+            let handles: Vec<_> = candidates
+                .iter()
+                .map(|(name, description)| {
+                    let name = name.clone();
+                    let description = description.clone();
+                    s.spawn(move || {
+                        if pypi_package_has_cli(&name) {
+                            Some(
+                                DiscoverResult::new(
+                                    name.clone(),
+                                    description,
+                                    DiscoverSource::PyPI,
+                                    format!("pip install {}", name),
+                                )
+                                .with_url(format!("https://pypi.org/project/{}/", name)),
+                            )
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .collect();
+
+            handles
+                .into_iter()
+                .filter_map(|h| h.join().ok().flatten())
+                .take(limit)
+                .collect()
+        });
 
         Ok(results)
     }
+}
+
+/// Check if a PyPI package has CLI entry points (console_scripts)
+fn pypi_package_has_cli(name: &str) -> bool {
+    let url = format!("https://pypi.org/pypi/{}/json", urlencoding::encode(name));
+
+    let response = match HTTP_AGENT.get(&url).call() {
+        Ok(resp) => resp,
+        Err(ureq::Error::StatusCode(404)) => {
+            // Package doesn't exist on PyPI
+            return false;
+        }
+        Err(_) => {
+            // Network error - can't determine, assume it might have CLI
+            return true;
+        }
+    };
+
+    let Ok(data): Result<serde_json::Value, _> = response.into_body().read_json() else {
+        return true;
+    };
+
+    // Check for console_scripts in info.project_urls or classifiers
+    // Also check if description mentions "CLI", "command-line", etc.
+    let info = &data["info"];
+
+    // Check classifiers for "Environment :: Console"
+    if let Some(classifiers) = info["classifiers"].as_array() {
+        for classifier in classifiers {
+            if let Some(c) = classifier.as_str()
+                && (c.contains("Environment :: Console") || c.contains("Command-line"))
+            {
+                return true;
+            }
+        }
+    }
+
+    // Check if summary/description mentions CLI
+    let summary = info["summary"].as_str().unwrap_or("");
+    let description = info["description"].as_str().unwrap_or("");
+    let combined = format!("{} {}", summary, description).to_lowercase();
+
+    if combined.contains("command-line")
+        || combined.contains("command line")
+        || combined.contains(" cli ")
+        || combined.contains("cli tool")
+        || combined.contains("cli for")
+    {
+        return true;
+    }
+
+    // Check project URLs for potential CLI indicators
+    if let Some(urls) = info["project_urls"].as_object() {
+        for key in urls.keys() {
+            if key.to_lowercase().contains("cli") {
+                return true;
+            }
+        }
+    }
+
+    // Check requires_dist for typical CLI dependencies like click, argparse, typer
+    if let Some(requires) = info["requires_dist"].as_array() {
+        for req in requires {
+            if let Some(r) = req.as_str() {
+                let r_lower = r.to_lowercase();
+                if r_lower.starts_with("click")
+                    || r_lower.starts_with("typer")
+                    || r_lower.starts_with("fire")
+                    || r_lower.starts_with("argcomplete")
+                {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
 }
 
 // ============================================================================
@@ -374,28 +612,6 @@ impl SearchSource for AptSearch {
 
 pub struct GitHubSearch;
 
-impl GitHubSearch {
-    /// Map GitHub language to DiscoverSource
-    fn language_to_source(language: &str) -> Option<DiscoverSource> {
-        match language.to_lowercase().as_str() {
-            "rust" => Some(DiscoverSource::CratesIo),
-            "python" => Some(DiscoverSource::PyPI),
-            "javascript" | "typescript" => Some(DiscoverSource::Npm),
-            _ => None,
-        }
-    }
-
-    /// Generate install command based on language
-    fn install_command(name: &str, language: &str) -> Option<String> {
-        match language.to_lowercase().as_str() {
-            "rust" => Some(format!("cargo install {}", name)),
-            "python" => Some(format!("pip install {}", name)),
-            "javascript" | "typescript" => Some(format!("npm install -g {}", name)),
-            _ => None,
-        }
-    }
-}
-
 impl SearchSource for GitHubSearch {
     fn name(&self) -> &'static str {
         "GitHub"
@@ -406,6 +622,9 @@ impl SearchSource for GitHubSearch {
     }
 
     fn search(&self, query: &str, limit: usize) -> Result<Vec<DiscoverResult>> {
+        // Fetch more results to filter out repos without installable packages
+        let fetch_limit = limit * 3;
+
         // Use gh CLI for searching
         let output = Command::new("gh")
             .args([
@@ -413,7 +632,7 @@ impl SearchSource for GitHubSearch {
                 "repos",
                 query,
                 "--limit",
-                &limit.to_string(),
+                &fetch_limit.to_string(),
                 "--json",
                 "name,description,stargazersCount,language,url",
             ])
@@ -432,28 +651,101 @@ impl SearchSource for GitHubSearch {
         let repos: Vec<serde_json::Value> =
             serde_json::from_str(&stdout).context("Failed to parse gh output")?;
 
-        let results: Vec<DiscoverResult> = repos
+        // Extract candidates with language info
+        let candidates: Vec<_> = repos
             .into_iter()
             .filter_map(|repo| {
                 let name = repo["name"].as_str()?.to_string();
                 let description = repo["description"].as_str().map(String::from);
                 let stars = repo["stargazersCount"].as_u64().unwrap_or(0);
-                let language = repo["language"].as_str().unwrap_or("");
+                let language = repo["language"].as_str().unwrap_or("").to_string();
                 let url = repo["url"].as_str().map(String::from);
-
-                // Only include if language maps to an install source
-                let source = Self::language_to_source(language)?;
-                let install_cmd = Self::install_command(&name, language)?;
-
-                let mut result = DiscoverResult::new(name, description, source, install_cmd);
-                result.stars = Some(stars);
-                if let Some(u) = url {
-                    result.url = Some(u);
-                }
-
-                Some(result)
+                Some((name, description, stars, language, url))
             })
             .collect();
+
+        // Cross-check against package registries (in parallel)
+        let results: Vec<_> = std::thread::scope(|s| {
+            let handles: Vec<_> = candidates
+                .iter()
+                .map(|(name, description, stars, language, url)| {
+                    let name = name.clone();
+                    let description = description.clone();
+                    let stars = *stars;
+                    let language = language.clone();
+                    let url = url.clone();
+                    s.spawn(move || {
+                        // Determine source and install command based on language
+                        let (source, install_cmd) = match language.to_lowercase().as_str() {
+                            "rust" => {
+                                match crate_has_binaries(&name) {
+                                    Some(true) => {
+                                        // Exists on crates.io with binaries
+                                        (
+                                            DiscoverSource::CratesIo,
+                                            format!("cargo install {}", name),
+                                        )
+                                    }
+                                    Some(false) => {
+                                        // Exists on crates.io but no binaries - skip
+                                        return None;
+                                    }
+                                    None => {
+                                        // Not on crates.io - offer git install if we have a URL
+                                        let git_url = url.as_ref()?;
+                                        (
+                                            DiscoverSource::GitHub,
+                                            format!("cargo install --git {}", git_url),
+                                        )
+                                    }
+                                }
+                            }
+                            "python" => {
+                                if pypi_package_has_cli(&name) {
+                                    (DiscoverSource::PyPI, format!("pip install {}", name))
+                                } else {
+                                    return None;
+                                }
+                            }
+                            "javascript" | "typescript" => {
+                                if npm_package_has_bin(&name) {
+                                    (DiscoverSource::Npm, format!("npm install -g {}", name))
+                                } else {
+                                    return None;
+                                }
+                            }
+                            "go" => {
+                                // Go installs directly from GitHub - no registry validation needed
+                                // Strip https:// prefix - go install needs github.com/user/repo format
+                                // Most Go CLI tools use the /cmd/name pattern for main package
+                                let git_url = url.as_ref()?;
+                                let go_path = git_url.strip_prefix("https://").unwrap_or(git_url);
+                                // Use /cmd/{name} pattern - standard for Go CLI tools
+                                let install_path = format!("{}/cmd/{}", go_path, name);
+                                (
+                                    DiscoverSource::Go,
+                                    format!("go install {}@latest", install_path),
+                                )
+                            }
+                            _ => return None,
+                        };
+
+                        let mut result =
+                            DiscoverResult::new(name, description, source, install_cmd);
+                        result.stars = Some(stars);
+                        result.url = url;
+                        result.language = Some(language);
+                        Some(result)
+                    })
+                })
+                .collect();
+
+            handles
+                .into_iter()
+                .filter_map(|h| h.join().ok().flatten())
+                .take(limit)
+                .collect()
+        });
 
         Ok(results)
     }
@@ -494,11 +786,13 @@ impl SearchSource for AiSearch {
         let response = invoke_ai(&prompt)?;
         let discovery = parse_discovery_response(&response)?;
 
-        let results: Vec<DiscoverResult> = discovery
+        // Convert AI recommendations to candidates for validation
+        let candidates: Vec<_> = discovery
             .tools
             .into_iter()
             .map(|tool| {
-                let source = match tool.source.to_lowercase().as_str() {
+                let source_str = tool.source.to_lowercase();
+                let source = match source_str.as_str() {
                     "cargo" | "crates.io" => DiscoverSource::CratesIo,
                     "pip" | "pypi" => DiscoverSource::PyPI,
                     "npm" => DiscoverSource::Npm,
@@ -506,23 +800,65 @@ impl SearchSource for AiSearch {
                     "brew" | "homebrew" => DiscoverSource::Homebrew,
                     _ => DiscoverSource::AI,
                 };
-
-                let mut result = DiscoverResult::new(
+                (
                     tool.name,
-                    Some(tool.description),
+                    tool.description,
                     source,
                     tool.install_cmd,
-                );
-                if let Some(stars) = tool.stars {
-                    result.stars = Some(stars);
-                }
-                if let Some(github) = tool.github {
-                    result.url = Some(github);
-                }
-
-                result
+                    tool.stars,
+                    tool.github,
+                )
             })
             .collect();
+
+        // Validate AI recommendations against package registries (in parallel)
+        let results: Vec<_> = std::thread::scope(|s| {
+            let handles: Vec<_> = candidates
+                .iter()
+                .map(|(name, description, source, install_cmd, stars, github)| {
+                    let name = name.clone();
+                    let description = description.clone();
+                    let source = source.clone();
+                    let install_cmd = install_cmd.clone();
+                    let stars = *stars;
+                    let github = github.clone();
+                    s.spawn(move || {
+                        // Validate the package exists and is installable
+                        let is_valid = match source {
+                            DiscoverSource::CratesIo => {
+                                // For AI-recommended crates.io packages, require they exist with binaries
+                                crate_has_binaries(&name) == Some(true)
+                            }
+                            DiscoverSource::PyPI => pypi_package_has_cli(&name),
+                            DiscoverSource::Npm => npm_package_has_bin(&name),
+                            // apt/brew recommendations are assumed valid
+                            DiscoverSource::Apt | DiscoverSource::Homebrew => true,
+                            // Unknown source, can't validate
+                            _ => true,
+                        };
+
+                        if is_valid {
+                            let mut result =
+                                DiscoverResult::new(name, Some(description), source, install_cmd);
+                            if let Some(s) = stars {
+                                result.stars = Some(s);
+                            }
+                            if let Some(g) = github {
+                                result.url = Some(g);
+                            }
+                            Some(result)
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .collect();
+
+            handles
+                .into_iter()
+                .filter_map(|h| h.join().ok().flatten())
+                .collect()
+        });
 
         Ok(results)
     }
@@ -593,6 +929,12 @@ pub fn deduplicate_results(mut results: Vec<DiscoverResult>) -> Vec<DiscoverResu
 
             let mut primary = sorted.remove(0);
 
+            // Helper to check if URL is a GitHub URL
+            let is_github_url = |url: &Option<String>| -> bool {
+                url.as_ref()
+                    .is_some_and(|u| u.contains("github.com") || u.contains("github.io"))
+            };
+
             // Merge install options from other sources
             for other in sorted {
                 for opt in other.install_options {
@@ -605,13 +947,13 @@ pub fn deduplicate_results(mut results: Vec<DiscoverResult>) -> Vec<DiscoverResu
                         primary.install_options.push(opt);
                     }
                 }
-                // Prefer GitHub description if available
-                if other.source == DiscoverSource::GitHub && other.description.is_some() {
-                    primary.description = other.description;
-                }
-                // Prefer GitHub URL
-                if other.source == DiscoverSource::GitHub && other.url.is_some() {
-                    primary.url = other.url;
+                // Prefer GitHub URL from any source over non-GitHub URLs
+                if is_github_url(&other.url) && !is_github_url(&primary.url) {
+                    primary.url = other.url.clone();
+                    // Also take description from the source with GitHub URL
+                    if other.description.is_some() {
+                        primary.description = other.description;
+                    }
                 }
             }
 
@@ -694,27 +1036,6 @@ mod tests {
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].name, "rip-grep"); // GitHub one has more stars
         assert_eq!(merged[0].install_options.len(), 2);
-    }
-
-    #[test]
-    fn test_github_language_mapping() {
-        assert_eq!(
-            GitHubSearch::language_to_source("Rust"),
-            Some(DiscoverSource::CratesIo)
-        );
-        assert_eq!(
-            GitHubSearch::language_to_source("Python"),
-            Some(DiscoverSource::PyPI)
-        );
-        assert_eq!(
-            GitHubSearch::language_to_source("JavaScript"),
-            Some(DiscoverSource::Npm)
-        );
-        assert_eq!(
-            GitHubSearch::language_to_source("TypeScript"),
-            Some(DiscoverSource::Npm)
-        );
-        assert_eq!(GitHubSearch::language_to_source("Go"), None);
     }
 
     #[test]
