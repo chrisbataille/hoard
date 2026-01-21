@@ -23,6 +23,9 @@ fn test_add_and_retrieve_tool() {
         is_installed: true,
         is_favorite: false,
         notes: None,
+        installed_version: None,
+        available_version: None,
+        version_policy: None,
         created_at: Utc::now(),
         updated_at: Utc::now(),
     };
@@ -58,6 +61,9 @@ fn test_search_tools() {
             is_installed: true,
             is_favorite: false,
             notes: None,
+            installed_version: None,
+            available_version: None,
+            version_policy: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -96,6 +102,9 @@ fn test_bundle_operations() {
             is_installed: false,
             is_favorite: false,
             notes: None,
+            installed_version: None,
+            available_version: None,
+            version_policy: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -108,6 +117,7 @@ fn test_bundle_operations() {
         name: "test-bundle".to_string(),
         description: Some("A test bundle".to_string()),
         tools: vec!["tool1".to_string(), "tool2".to_string()],
+        version_policy: None,
         created_at: Utc::now(),
     };
 
@@ -168,6 +178,9 @@ fn test_labels() {
         is_installed: false,
         is_favorite: false,
         notes: None,
+        installed_version: None,
+        available_version: None,
+        version_policy: None,
         created_at: Utc::now(),
         updated_at: Utc::now(),
     };
@@ -213,6 +226,7 @@ fn test_bundle_creation_atomic() {
             "tool-b".to_string(),
             "tool-c".to_string(),
         ],
+        version_policy: None,
         created_at: Utc::now(),
     };
 

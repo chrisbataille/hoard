@@ -81,7 +81,8 @@ impl Database {
         let mut stmt = self.conn.prepare(
             "SELECT t.id, t.name, t.description, t.category, t.source, t.install_command,
                     t.binary_name, t.is_installed, t.is_favorite, t.notes,
-                    t.created_at, t.updated_at
+                    t.created_at, t.updated_at, t.installed_version, t.available_version,
+                    t.version_policy
              FROM tools t
              JOIN tool_labels tl ON t.id = tl.tool_id
              WHERE tl.label = ?1

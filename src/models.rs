@@ -50,6 +50,39 @@ impl From<&str> for InstallSource {
     }
 }
 
+/// Version update policy for tools
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub enum VersionPolicy {
+    /// Accept any version update (major, minor, patch)
+    Latest,
+    /// Only accept minor and patch updates (skip major version bumps)
+    #[default]
+    Stable,
+    /// Never update - keep current version
+    Pinned,
+}
+
+impl std::fmt::Display for VersionPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Latest => write!(f, "latest"),
+            Self::Stable => write!(f, "stable"),
+            Self::Pinned => write!(f, "pinned"),
+        }
+    }
+}
+
+impl From<&str> for VersionPolicy {
+    fn from(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "latest" => Self::Latest,
+            "stable" => Self::Stable,
+            "pinned" => Self::Pinned,
+            _ => Self::default(),
+        }
+    }
+}
+
 /// A tool tracked by hoard
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tool {
@@ -63,6 +96,9 @@ pub struct Tool {
     pub is_installed: bool,
     pub is_favorite: bool,
     pub notes: Option<String>,
+    pub installed_version: Option<String>,
+    pub available_version: Option<String>,
+    pub version_policy: Option<VersionPolicy>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -81,6 +117,9 @@ impl Tool {
             is_installed: false,
             is_favorite: false,
             notes: None,
+            installed_version: None,
+            available_version: None,
+            version_policy: None,
             created_at: now,
             updated_at: now,
         }
@@ -113,6 +152,21 @@ impl Tool {
 
     pub fn installed(mut self) -> Self {
         self.is_installed = true;
+        self
+    }
+
+    pub fn with_installed_version(mut self, version: impl Into<String>) -> Self {
+        self.installed_version = Some(version.into());
+        self
+    }
+
+    pub fn with_available_version(mut self, version: impl Into<String>) -> Self {
+        self.available_version = Some(version.into());
+        self
+    }
+
+    pub fn with_version_policy(mut self, policy: VersionPolicy) -> Self {
+        self.version_policy = Some(policy);
         self
     }
 }
@@ -179,6 +233,7 @@ pub struct Bundle {
     pub name: String,
     pub description: Option<String>,
     pub tools: Vec<String>,
+    pub version_policy: Option<VersionPolicy>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -189,12 +244,18 @@ impl Bundle {
             name: name.into(),
             description: None,
             tools,
+            version_policy: None,
             created_at: Utc::now(),
         }
     }
 
     pub fn with_description(mut self, desc: impl Into<String>) -> Self {
         self.description = Some(desc.into());
+        self
+    }
+
+    pub fn with_version_policy(mut self, policy: VersionPolicy) -> Self {
+        self.version_policy = Some(policy);
         self
     }
 }
@@ -277,6 +338,9 @@ mod tests {
         assert!(!tool.is_installed);
         assert!(!tool.is_favorite);
         assert!(tool.notes.is_none());
+        assert!(tool.installed_version.is_none());
+        assert!(tool.available_version.is_none());
+        assert!(tool.version_policy.is_none());
     }
 
     #[test]
@@ -396,5 +460,89 @@ mod tests {
         let deserialized: Tool = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.name, "test");
         assert_eq!(deserialized.source, InstallSource::Cargo);
+    }
+
+    // ==================== VersionPolicy Tests ====================
+
+    #[test]
+    fn test_version_policy_default() {
+        assert_eq!(VersionPolicy::default(), VersionPolicy::Stable);
+    }
+
+    #[test]
+    fn test_version_policy_display() {
+        assert_eq!(VersionPolicy::Latest.to_string(), "latest");
+        assert_eq!(VersionPolicy::Stable.to_string(), "stable");
+        assert_eq!(VersionPolicy::Pinned.to_string(), "pinned");
+    }
+
+    #[test]
+    fn test_version_policy_from_str() {
+        assert_eq!(VersionPolicy::from("latest"), VersionPolicy::Latest);
+        assert_eq!(VersionPolicy::from("LATEST"), VersionPolicy::Latest);
+        assert_eq!(VersionPolicy::from("stable"), VersionPolicy::Stable);
+        assert_eq!(VersionPolicy::from("STABLE"), VersionPolicy::Stable);
+        assert_eq!(VersionPolicy::from("pinned"), VersionPolicy::Pinned);
+        assert_eq!(VersionPolicy::from("PINNED"), VersionPolicy::Pinned);
+        // Unknown defaults to Stable
+        assert_eq!(VersionPolicy::from("unknown"), VersionPolicy::Stable);
+        assert_eq!(VersionPolicy::from(""), VersionPolicy::Stable);
+    }
+
+    #[test]
+    fn test_version_policy_roundtrip() {
+        let policies = [
+            VersionPolicy::Latest,
+            VersionPolicy::Stable,
+            VersionPolicy::Pinned,
+        ];
+        for policy in policies {
+            let s = policy.to_string();
+            assert_eq!(VersionPolicy::from(s.as_str()), policy);
+        }
+    }
+
+    #[test]
+    fn test_tool_version_fields() {
+        let tool = Tool::new("ripgrep")
+            .with_installed_version("13.0.0")
+            .with_available_version("14.1.0")
+            .with_version_policy(VersionPolicy::Stable);
+
+        assert_eq!(tool.installed_version, Some("13.0.0".to_string()));
+        assert_eq!(tool.available_version, Some("14.1.0".to_string()));
+        assert_eq!(tool.version_policy, Some(VersionPolicy::Stable));
+    }
+
+    #[test]
+    fn test_tool_version_fields_none_by_default() {
+        let tool = Tool::new("test");
+        assert!(tool.installed_version.is_none());
+        assert!(tool.available_version.is_none());
+        assert!(tool.version_policy.is_none());
+    }
+
+    #[test]
+    fn test_bundle_version_policy() {
+        let bundle = Bundle::new("dev", vec!["cargo".to_string()])
+            .with_version_policy(VersionPolicy::Latest);
+
+        assert_eq!(bundle.version_policy, Some(VersionPolicy::Latest));
+    }
+
+    #[test]
+    fn test_bundle_version_policy_none_by_default() {
+        let bundle = Bundle::new("test", vec![]);
+        assert!(bundle.version_policy.is_none());
+    }
+
+    #[test]
+    fn test_version_policy_serialize_json() {
+        let policy = VersionPolicy::Stable;
+        let json = serde_json::to_string(&policy).unwrap();
+        assert_eq!(json, "\"Stable\"");
+
+        let deserialized: VersionPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, VersionPolicy::Stable);
     }
 }

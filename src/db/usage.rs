@@ -174,7 +174,8 @@ impl Database {
     pub fn get_unused_tools(&self) -> Result<Vec<Tool>> {
         let mut stmt = self.conn.prepare(
             "SELECT t.id, t.name, t.description, t.category, t.source, t.install_command,
-                    t.binary_name, t.is_installed, t.is_favorite, t.notes, t.created_at, t.updated_at
+                    t.binary_name, t.is_installed, t.is_favorite, t.notes, t.created_at, t.updated_at,
+                    t.installed_version, t.available_version, t.version_policy
              FROM tools t
              LEFT JOIN tool_usage tu ON t.id = tu.tool_id
              WHERE t.is_installed = 1 AND (tu.tool_id IS NULL OR tu.use_count = 0)

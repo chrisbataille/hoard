@@ -20,6 +20,7 @@ use hoards::{
     GhCommands,
     HoardConfig,
     InsightsCommands,
+    PolicyCommands,
     UsageCommands,
     // Core commands
     cmd_add,
@@ -86,6 +87,15 @@ use hoards::{
     cmd_list,
     cmd_maintain,
     cmd_overview,
+    // Policy commands
+    cmd_policy_clear,
+    cmd_policy_clear_bundle,
+    cmd_policy_clear_source,
+    cmd_policy_set,
+    cmd_policy_set_bundle,
+    cmd_policy_set_default,
+    cmd_policy_set_source,
+    cmd_policy_show,
     cmd_recommend,
     cmd_remove,
     cmd_scan,
@@ -440,6 +450,23 @@ fn main() -> Result<()> {
                 tool,
             } => cmd_config_edit(&db, &name, target, source, tool),
             _ => unreachable!("all ConfigCommands variants covered"),
+        },
+
+        // ============================================
+        // VERSION POLICY
+        // ============================================
+        Commands::Policy(command) => match command {
+            PolicyCommands::Set { name, policy } => cmd_policy_set(&db, &name, &policy),
+            PolicyCommands::Clear { name } => cmd_policy_clear(&db, &name),
+            PolicyCommands::SetSource { source, policy } => cmd_policy_set_source(&source, &policy),
+            PolicyCommands::ClearSource { source } => cmd_policy_clear_source(&source),
+            PolicyCommands::SetDefault { policy } => cmd_policy_set_default(&policy),
+            PolicyCommands::Show => cmd_policy_show(&db),
+            PolicyCommands::SetBundle { name, policy } => {
+                cmd_policy_set_bundle(&db, &name, &policy)
+            }
+            PolicyCommands::ClearBundle { name } => cmd_policy_clear_bundle(&db, &name),
+            _ => unreachable!("all PolicyCommands variants covered"),
         },
 
         // ============================================

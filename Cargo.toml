@@ -36,6 +36,9 @@ base64 = "0.22"
 # HTTP client (for PyPI API)
 ureq = { version = "3", features = ["json"] }
 
+# Version parsing
+semver = "1"
+
 # Interactive prompts
 dialoguer = "0.11"
 comfy-table = "7.2.2"

@@ -113,9 +113,13 @@ impl PackageSource for AptSource {
     }
 
     fn scan(&self) -> Result<Vec<Tool>> {
-        // Get list of installed packages with their sections
+        // Get list of installed packages with their sections and versions
         let output = Command::new("dpkg-query")
-            .args(["-W", "-f", "${Package}\t${Section}\t${binary:Summary}\n"])
+            .args([
+                "-W",
+                "-f",
+                "${Package}\t${Version}\t${Section}\t${binary:Summary}\n",
+            ])
             .output()?;
 
         if !output.status.success() {
@@ -126,14 +130,18 @@ impl PackageSource for AptSource {
         let mut tools = Vec::new();
 
         for line in stdout.lines() {
-            let parts: Vec<&str> = line.splitn(3, '\t').collect();
-            if parts.len() < 2 {
+            let parts: Vec<&str> = line.splitn(4, '\t').collect();
+            if parts.len() < 3 {
                 continue;
             }
 
             let package = parts[0];
-            let section = parts.get(1).unwrap_or(&"");
-            let description = parts.get(2).map(|s| s.to_string());
+            let version = parts
+                .get(1)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+            let section = parts.get(2).unwrap_or(&"");
+            let description = parts.get(3).map(|s| s.to_string());
 
             // Skip GUI sections
             if GUI_SECTIONS.iter().any(|s| section.contains(s)) {
@@ -179,6 +187,11 @@ impl PackageSource for AptSource {
                 .with_category(category)
                 .with_install_command(self.install_command(package))
                 .installed();
+
+            // Set installed version if available
+            if let Some(ver) = version {
+                tool = tool.with_installed_version(ver);
+            }
 
             if let Some(desc) = description
                 && !desc.is_empty()

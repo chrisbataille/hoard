@@ -131,5 +131,89 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
         "#,
     )?;
 
+    // Run migrations for new columns
+    run_migrations(conn)?;
+
     Ok(())
+}
+
+/// Check if a column exists in a table
+fn column_exists(conn: &Connection, table: &str, column: &str) -> bool {
+    let query = format!("PRAGMA table_info({})", table);
+    conn.prepare(&query)
+        .and_then(|mut stmt| {
+            stmt.query_map([], |row| row.get::<_, String>(1))
+                .map(|rows| rows.filter_map(|r| r.ok()).any(|name| name == column))
+        })
+        .unwrap_or(false)
+}
+
+/// Run database migrations for schema updates
+fn run_migrations(conn: &Connection) -> Result<()> {
+    // Migration: Add version tracking columns to tools table
+    if !column_exists(conn, "tools", "installed_version") {
+        conn.execute("ALTER TABLE tools ADD COLUMN installed_version TEXT", [])?;
+    }
+
+    if !column_exists(conn, "tools", "available_version") {
+        conn.execute("ALTER TABLE tools ADD COLUMN available_version TEXT", [])?;
+    }
+
+    if !column_exists(conn, "tools", "version_policy") {
+        conn.execute("ALTER TABLE tools ADD COLUMN version_policy TEXT", [])?;
+    }
+
+    // Migration: Add version_policy column to bundles table
+    if !column_exists(conn, "bundles", "version_policy") {
+        conn.execute("ALTER TABLE bundles ADD COLUMN version_policy TEXT", [])?;
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_init_schema() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+
+        // Verify tables exist
+        let tables: Vec<String> = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+
+        assert!(tables.contains(&"tools".to_string()));
+        assert!(tables.contains(&"bundles".to_string()));
+    }
+
+    #[test]
+    fn test_migrations_add_version_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+
+        // Verify version columns exist in tools
+        assert!(column_exists(&conn, "tools", "installed_version"));
+        assert!(column_exists(&conn, "tools", "available_version"));
+        assert!(column_exists(&conn, "tools", "version_policy"));
+
+        // Verify version_policy exists in bundles
+        assert!(column_exists(&conn, "bundles", "version_policy"));
+    }
+
+    #[test]
+    fn test_migrations_idempotent() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+
+        // Running migrations again should not fail
+        run_migrations(&conn).unwrap();
+        run_migrations(&conn).unwrap();
+    }
 }

@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use rusqlite::params;
 
-use crate::models::{InstallSource, Interest, Tool};
+use crate::models::{InstallSource, Interest, Tool, VersionPolicy};
 
 use super::Database;
 
@@ -30,6 +30,11 @@ pub(crate) fn tool_from_row(row: &rusqlite::Row) -> rusqlite::Result<Tool> {
         notes: row.get(9)?,
         created_at: parse_datetime(row.get(10)?),
         updated_at: parse_datetime(row.get(11)?),
+        installed_version: row.get(12)?,
+        available_version: row.get(13)?,
+        version_policy: row
+            .get::<_, Option<String>>(14)?
+            .map(|s| VersionPolicy::from(s.as_str())),
     })
 }
 
@@ -41,8 +46,9 @@ impl Database {
         self.conn.execute(
             r#"
             INSERT INTO tools (name, description, category, source, install_command,
-                             binary_name, is_installed, is_favorite, notes, created_at, updated_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                             binary_name, is_installed, is_favorite, notes, created_at, updated_at,
+                             installed_version, available_version, version_policy)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
             "#,
             params![
                 tool.name,
@@ -56,6 +62,9 @@ impl Database {
                 tool.notes,
                 tool.created_at.to_rfc3339(),
                 tool.updated_at.to_rfc3339(),
+                tool.installed_version,
+                tool.available_version,
+                tool.version_policy.as_ref().map(|p| p.to_string()),
             ],
         )?;
 
@@ -67,12 +76,14 @@ impl Database {
         self.conn.execute(
             r#"
             INSERT INTO tools (name, description, category, source, install_command,
-                             binary_name, is_installed, is_favorite, notes, created_at, updated_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                             binary_name, is_installed, is_favorite, notes, created_at, updated_at,
+                             installed_version, available_version, version_policy)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
             ON CONFLICT(name) DO UPDATE SET
                 source = excluded.source,
                 install_command = excluded.install_command,
                 is_installed = excluded.is_installed,
+                installed_version = COALESCE(excluded.installed_version, tools.installed_version),
                 updated_at = excluded.updated_at
             "#,
             params![
@@ -87,6 +98,9 @@ impl Database {
                 tool.notes,
                 tool.created_at.to_rfc3339(),
                 tool.updated_at.to_rfc3339(),
+                tool.installed_version,
+                tool.available_version,
+                tool.version_policy.as_ref().map(|p| p.to_string()),
             ],
         )?;
 
@@ -102,8 +116,9 @@ impl Database {
             UPDATE tools SET
                 name = ?1, description = ?2, category = ?3, source = ?4,
                 install_command = ?5, binary_name = ?6, is_installed = ?7,
-                is_favorite = ?8, notes = ?9, updated_at = ?10
-            WHERE id = ?11
+                is_favorite = ?8, notes = ?9, updated_at = ?10,
+                installed_version = ?11, available_version = ?12, version_policy = ?13
+            WHERE id = ?14
             "#,
             params![
                 tool.name,
@@ -116,6 +131,9 @@ impl Database {
                 tool.is_favorite,
                 tool.notes,
                 Utc::now().to_rfc3339(),
+                tool.installed_version,
+                tool.available_version,
+                tool.version_policy.as_ref().map(|p| p.to_string()),
                 id,
             ],
         )?;
@@ -154,7 +172,8 @@ impl Database {
     pub fn get_tool_by_name(&self, name: &str) -> Result<Option<Tool>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, description, category, source, install_command,
-                    binary_name, is_installed, is_favorite, notes, created_at, updated_at
+                    binary_name, is_installed, is_favorite, notes, created_at, updated_at,
+                    installed_version, available_version, version_policy
              FROM tools WHERE name = ?1",
         )?;
 
@@ -171,7 +190,8 @@ impl Database {
     pub fn list_tools(&self, installed_only: bool, category: Option<&str>) -> Result<Vec<Tool>> {
         let mut query = String::from(
             "SELECT id, name, description, category, source, install_command,
-                    binary_name, is_installed, is_favorite, notes, created_at, updated_at
+                    binary_name, is_installed, is_favorite, notes, created_at, updated_at,
+                    installed_version, available_version, version_policy
              FROM tools WHERE 1=1",
         );
 
@@ -202,7 +222,8 @@ impl Database {
 
         let mut stmt = self.conn.prepare(
             "SELECT id, name, description, category, source, install_command,
-                    binary_name, is_installed, is_favorite, notes, created_at, updated_at
+                    binary_name, is_installed, is_favorite, notes, created_at, updated_at,
+                    installed_version, available_version, version_policy
              FROM tools
              WHERE name LIKE ?1 OR description LIKE ?1 OR category LIKE ?1
              ORDER BY name",
@@ -230,6 +251,55 @@ impl Database {
         let rows = self.conn.execute(
             "UPDATE tools SET is_favorite = ?1, updated_at = ?2 WHERE name = ?3",
             params![favorite, Utc::now().to_rfc3339(), name],
+        )?;
+
+        Ok(rows > 0)
+    }
+
+    /// Update installed version for a tool
+    pub fn set_tool_installed_version(&self, name: &str, version: Option<&str>) -> Result<bool> {
+        let rows = self.conn.execute(
+            "UPDATE tools SET installed_version = ?1, updated_at = ?2 WHERE name = ?3",
+            params![version, Utc::now().to_rfc3339(), name],
+        )?;
+
+        Ok(rows > 0)
+    }
+
+    /// Update available version for a tool
+    pub fn set_tool_available_version(&self, name: &str, version: Option<&str>) -> Result<bool> {
+        let rows = self.conn.execute(
+            "UPDATE tools SET available_version = ?1, updated_at = ?2 WHERE name = ?3",
+            params![version, Utc::now().to_rfc3339(), name],
+        )?;
+
+        Ok(rows > 0)
+    }
+
+    /// Update version policy for a tool
+    pub fn set_tool_version_policy(
+        &self,
+        name: &str,
+        policy: Option<&VersionPolicy>,
+    ) -> Result<bool> {
+        let rows = self.conn.execute(
+            "UPDATE tools SET version_policy = ?1, updated_at = ?2 WHERE name = ?3",
+            params![policy.map(|p| p.to_string()), Utc::now().to_rfc3339(), name],
+        )?;
+
+        Ok(rows > 0)
+    }
+
+    /// Update both installed version and mark as installed
+    pub fn set_tool_installed_with_version(
+        &self,
+        name: &str,
+        installed: bool,
+        version: Option<&str>,
+    ) -> Result<bool> {
+        let rows = self.conn.execute(
+            "UPDATE tools SET is_installed = ?1, installed_version = ?2, updated_at = ?3 WHERE name = ?4",
+            params![installed, version, Utc::now().to_rfc3339(), name],
         )?;
 
         Ok(rows > 0)
@@ -295,7 +365,8 @@ impl Database {
     pub fn get_all_tools(&self) -> Result<Vec<Tool>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, description, category, source, install_command,
-                    binary_name, is_installed, is_favorite, notes, created_at, updated_at
+                    binary_name, is_installed, is_favorite, notes, created_at, updated_at,
+                    installed_version, available_version, version_policy
              FROM tools ORDER BY name",
         )?;
 

@@ -257,6 +257,46 @@ pub struct SourcesConfig {
     pub manual: bool,
 }
 
+/// Version policy configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VersionPolicyConfig {
+    /// Global default version policy (default: Stable)
+    #[serde(default)]
+    pub default: crate::models::VersionPolicy,
+    /// Per-source version policies (overrides global default)
+    #[serde(default)]
+    pub sources: std::collections::HashMap<String, crate::models::VersionPolicy>,
+}
+
+impl Default for VersionPolicyConfig {
+    fn default() -> Self {
+        Self {
+            default: crate::models::VersionPolicy::Stable,
+            sources: std::collections::HashMap::new(),
+        }
+    }
+}
+
+impl VersionPolicyConfig {
+    /// Get the effective policy for a source (source policy > global default)
+    pub fn policy_for_source(&self, source: &str) -> crate::models::VersionPolicy {
+        self.sources
+            .get(&source.to_lowercase())
+            .cloned()
+            .unwrap_or_else(|| self.default.clone())
+    }
+
+    /// Set policy for a specific source
+    pub fn set_source_policy(&mut self, source: &str, policy: crate::models::VersionPolicy) {
+        self.sources.insert(source.to_lowercase(), policy);
+    }
+
+    /// Remove source-specific policy (will fall back to default)
+    pub fn clear_source_policy(&mut self, source: &str) {
+        self.sources.remove(&source.to_lowercase());
+    }
+}
+
 fn default_true() -> bool {
     true
 }
@@ -363,6 +403,9 @@ pub struct HoardConfig {
 
     #[serde(default)]
     pub sources: SourcesConfig,
+
+    #[serde(default)]
+    pub version_policy: VersionPolicyConfig,
 }
 
 impl HoardConfig {
@@ -423,6 +466,7 @@ impl HoardConfig {
                 },
                 tui: TuiConfig::default(),
                 sources: SourcesConfig::default(),
+                version_policy: VersionPolicyConfig::default(),
             };
 
             // Save as JSON
@@ -570,5 +614,86 @@ mod tests {
         assert_eq!(config.tui.theme, TuiTheme::Dracula);
         assert!(config.sources.cargo);
         assert!(config.sources.pip);
+    }
+
+    #[test]
+    fn test_version_policy_config_default() {
+        let config = VersionPolicyConfig::default();
+        assert_eq!(config.default, crate::models::VersionPolicy::Stable);
+        assert!(config.sources.is_empty());
+    }
+
+    #[test]
+    fn test_version_policy_for_source() {
+        let mut config = VersionPolicyConfig::default();
+
+        // Without source override, returns global default
+        assert_eq!(
+            config.policy_for_source("cargo"),
+            crate::models::VersionPolicy::Stable
+        );
+
+        // Set source-specific policy
+        config.set_source_policy("cargo", crate::models::VersionPolicy::Latest);
+        assert_eq!(
+            config.policy_for_source("cargo"),
+            crate::models::VersionPolicy::Latest
+        );
+
+        // Other sources still use default
+        assert_eq!(
+            config.policy_for_source("pip"),
+            crate::models::VersionPolicy::Stable
+        );
+    }
+
+    #[test]
+    fn test_version_policy_case_insensitive() {
+        let mut config = VersionPolicyConfig::default();
+        config.set_source_policy("CARGO", crate::models::VersionPolicy::Pinned);
+
+        assert_eq!(
+            config.policy_for_source("cargo"),
+            crate::models::VersionPolicy::Pinned
+        );
+        assert_eq!(
+            config.policy_for_source("CARGO"),
+            crate::models::VersionPolicy::Pinned
+        );
+    }
+
+    #[test]
+    fn test_version_policy_clear() {
+        let mut config = VersionPolicyConfig::default();
+        config.set_source_policy("cargo", crate::models::VersionPolicy::Pinned);
+        assert_eq!(
+            config.policy_for_source("cargo"),
+            crate::models::VersionPolicy::Pinned
+        );
+
+        config.clear_source_policy("cargo");
+        assert_eq!(
+            config.policy_for_source("cargo"),
+            crate::models::VersionPolicy::Stable
+        );
+    }
+
+    #[test]
+    fn test_version_policy_serialization() {
+        let json = r#"{
+            "version_policy": {
+                "default": "Latest",
+                "sources": { "cargo": "Pinned" }
+            }
+        }"#;
+        let config: HoardConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            config.version_policy.default,
+            crate::models::VersionPolicy::Latest
+        );
+        assert_eq!(
+            config.version_policy.policy_for_source("cargo"),
+            crate::models::VersionPolicy::Pinned
+        );
     }
 }

@@ -280,6 +280,13 @@ pub enum Commands {
     Config(ConfigCommands),
 
     // ============================================
+    // VERSION POLICY
+    // ============================================
+    /// Manage version update policies
+    #[command(subcommand)]
+    Policy(PolicyCommands),
+
+    // ============================================
     // IMPORT/EXPORT
     // ============================================
     /// Export tools database to a file
@@ -1062,5 +1069,72 @@ pub enum ConfigCommands {
         /// Associate with a tool
         #[arg(long)]
         tool: Option<String>,
+    },
+}
+
+// ============================================
+// POLICY SUBCOMMANDS
+// ============================================
+
+#[derive(Subcommand)]
+#[non_exhaustive]
+pub enum PolicyCommands {
+    /// Set version policy for a tool
+    Set {
+        /// Tool name
+        name: String,
+
+        /// Policy (latest, stable, pinned)
+        policy: String,
+    },
+
+    /// Clear version policy for a tool (use inherited policy)
+    Clear {
+        /// Tool name
+        name: String,
+    },
+
+    /// Set default policy for a package source
+    #[command(name = "set-source")]
+    SetSource {
+        /// Source name (cargo, pip, npm, apt, brew, flatpak, go)
+        source: String,
+
+        /// Policy (latest, stable, pinned)
+        policy: String,
+    },
+
+    /// Clear source-specific policy (use global default)
+    #[command(name = "clear-source")]
+    ClearSource {
+        /// Source name
+        source: String,
+    },
+
+    /// Set global default policy
+    #[command(name = "set-default")]
+    SetDefault {
+        /// Policy (latest, stable, pinned)
+        policy: String,
+    },
+
+    /// Show all version policies
+    Show,
+
+    /// Set version policy for a bundle
+    #[command(name = "set-bundle")]
+    SetBundle {
+        /// Bundle name
+        name: String,
+
+        /// Policy (latest, stable, pinned)
+        policy: String,
+    },
+
+    /// Clear version policy for a bundle
+    #[command(name = "clear-bundle")]
+    ClearBundle {
+        /// Bundle name
+        name: String,
     },
 }
