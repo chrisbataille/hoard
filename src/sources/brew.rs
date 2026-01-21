@@ -19,8 +19,9 @@ impl PackageSource for BrewSource {
     }
 
     fn scan(&self) -> Result<Vec<Tool>> {
+        // Use --versions to get both package name and version
         let output = Command::new("brew")
-            .args(["list", "--formula", "-1"])
+            .args(["list", "--formula", "--versions"])
             .output()?;
 
         if !output.status.success() {
@@ -30,11 +31,20 @@ impl PackageSource for BrewSource {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let mut tools = Vec::new();
 
-        for package in stdout.lines() {
-            let package = package.trim();
-            if package.is_empty() {
+        for line in stdout.lines() {
+            let line = line.trim();
+            if line.is_empty() {
                 continue;
             }
+
+            // Format: "package version" or "package version1 version2" (multiple versions)
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            let package = match parts.first() {
+                Some(p) => *p,
+                None => continue,
+            };
+            // Take the first version (most recent)
+            let version = parts.get(1).map(|s| s.to_string());
 
             // Skip if already in KNOWN_TOOLS
             if KNOWN_TOOLS.iter().any(|kt| kt.name == package) {
@@ -46,13 +56,17 @@ impl PackageSource for BrewSource {
                 continue;
             }
 
-            let tool = Tool::new(package)
+            let mut tool = Tool::new(package)
                 .with_source(InstallSource::Brew)
                 .with_binary(package)
                 .with_category("cli")
                 .with_install_command(self.install_command(package))
                 .installed();
-            // Description fetched in parallel by cmd_scan
+
+            // Set installed version if available
+            if let Some(ver) = version {
+                tool = tool.with_installed_version(ver);
+            }
 
             tools.push(tool);
         }

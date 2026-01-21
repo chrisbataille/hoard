@@ -3,7 +3,7 @@
 use anyhow::Result;
 use rusqlite::params;
 
-use crate::models::Bundle;
+use crate::models::{Bundle, VersionPolicy};
 
 use super::Database;
 use super::tools::parse_datetime;
@@ -16,11 +16,12 @@ impl Database {
         let tx = self.conn.unchecked_transaction()?;
 
         tx.execute(
-            "INSERT INTO bundles (name, description, created_at) VALUES (?1, ?2, ?3)",
+            "INSERT INTO bundles (name, description, created_at, version_policy) VALUES (?1, ?2, ?3, ?4)",
             params![
                 bundle.name,
                 bundle.description,
-                bundle.created_at.to_rfc3339()
+                bundle.created_at.to_rfc3339(),
+                bundle.version_policy.as_ref().map(|p| p.to_string()),
             ],
         )?;
 
@@ -41,7 +42,7 @@ impl Database {
     /// Get a bundle by name
     pub fn get_bundle(&self, name: &str) -> Result<Option<Bundle>> {
         let bundle_row = self.conn.query_row(
-            "SELECT id, name, description, created_at FROM bundles WHERE name = ?1",
+            "SELECT id, name, description, created_at, version_policy FROM bundles WHERE name = ?1",
             [name],
             |row| {
                 Ok((
@@ -49,12 +50,13 @@ impl Database {
                     row.get::<_, String>(1)?,
                     row.get::<_, Option<String>>(2)?,
                     row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
                 ))
             },
         );
 
         match bundle_row {
-            Ok((id, name, description, created_at)) => {
+            Ok((id, name, description, created_at, version_policy)) => {
                 // Get tools for this bundle
                 let mut stmt = self.conn.prepare(
                     "SELECT tool_name FROM bundle_tools WHERE bundle_id = ?1 ORDER BY tool_name",
@@ -68,6 +70,7 @@ impl Database {
                     name,
                     description,
                     tools,
+                    version_policy: version_policy.map(|s| VersionPolicy::from(s.as_str())),
                     created_at: parse_datetime(created_at),
                 }))
             }
@@ -80,7 +83,7 @@ impl Database {
     pub fn list_bundles(&self) -> Result<Vec<Bundle>> {
         // Single query with LEFT JOIN to get bundles and their tools
         let mut stmt = self.conn.prepare(
-            "SELECT b.id, b.name, b.description, b.created_at, bt.tool_name
+            "SELECT b.id, b.name, b.description, b.created_at, b.version_policy, bt.tool_name
              FROM bundles b
              LEFT JOIN bundle_tools bt ON b.id = bt.bundle_id
              ORDER BY b.name, bt.tool_name",
@@ -96,7 +99,8 @@ impl Database {
             let name: String = row.get(1)?;
             let description: Option<String> = row.get(2)?;
             let created_at: String = row.get(3)?;
-            let tool_name: Option<String> = row.get(4)?;
+            let version_policy: Option<String> = row.get(4)?;
+            let tool_name: Option<String> = row.get(5)?;
             if current_id != Some(id) {
                 // New bundle
                 bundles.push(Bundle {
@@ -104,6 +108,7 @@ impl Database {
                     name,
                     description,
                     tools: tool_name.into_iter().collect(),
+                    version_policy: version_policy.map(|s| VersionPolicy::from(s.as_str())),
                     created_at: parse_datetime(created_at),
                 });
                 current_id = Some(id);
@@ -184,5 +189,18 @@ impl Database {
             .query_map([], |row| row.get(0))?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(names)
+    }
+
+    /// Set version policy for a bundle
+    pub fn set_bundle_version_policy(
+        &self,
+        name: &str,
+        policy: Option<&VersionPolicy>,
+    ) -> Result<bool> {
+        let rows = self.conn.execute(
+            "UPDATE bundles SET version_policy = ?1 WHERE name = ?2",
+            params![policy.map(|p| p.to_string()), name],
+        )?;
+        Ok(rows > 0)
     }
 }

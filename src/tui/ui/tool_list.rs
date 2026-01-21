@@ -22,6 +22,9 @@ use super::helpers::{
 };
 use crate::db::Database;
 use crate::icons::source_icon;
+use crate::version_policy::{
+    UpdateDecision, classify_change, policy_source, resolve_policy, should_update,
+};
 
 /// Render empty state for Updates tab when updates haven't been checked
 pub fn render_updates_empty_state(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
@@ -82,6 +85,31 @@ fn get_tool_status_indicator(
     }
 }
 
+/// Get version update indicator for a tool based on its policy
+fn get_version_indicator(
+    app: &App,
+    tool: &crate::models::Tool,
+    theme: &Theme,
+) -> Option<(String, ratatui::style::Color)> {
+    // Get bundles for policy resolution
+    let bundles = &app.bundles.items;
+    let config = crate::config::HoardConfig::load().unwrap_or_default();
+    let policy = resolve_policy(tool, bundles, &config);
+
+    let decision = should_update(
+        tool.installed_version.as_deref(),
+        tool.available_version.as_deref(),
+        &policy,
+    );
+
+    match decision {
+        UpdateDecision::Update => Some(("↑".to_string(), theme.green)),
+        UpdateDecision::SkipMajor => Some(("⚠".to_string(), theme.yellow)),
+        UpdateDecision::Pinned => Some(("📌".to_string(), theme.subtext0)),
+        UpdateDecision::UpToDate | UpdateDecision::Unknown => None,
+    }
+}
+
 /// Build a single tool list item
 fn build_tool_list_item(
     app: &App,
@@ -121,6 +149,11 @@ fn build_tool_list_item(
         })
         .unwrap_or_else(|| Span::raw(""));
 
+    // Version indicator based on update policy
+    let version_span = get_version_indicator(app, tool, theme)
+        .map(|(icon, color)| Span::styled(format!(" {icon}"), Style::default().fg(color)))
+        .unwrap_or_else(|| Span::raw(""));
+
     let mut spans = vec![
         Span::styled(format!("{checkbox} "), Style::default().fg(checkbox_color)),
         Span::styled(format!("{src_icon} "), Style::default()),
@@ -133,6 +166,7 @@ fn build_tool_list_item(
         theme.yellow,
     ));
     spans.push(stars_span);
+    spans.push(version_span);
     spans.push(Span::styled(extra_info, Style::default().fg(extra_color)));
     spans.push(spark_span);
 
@@ -296,6 +330,47 @@ pub fn render_details(frame: &mut Frame, app: &mut App, db: &Database, theme: &T
                 ));
             }
             lines.push(Line::from(spans));
+        }
+
+        // Version information
+        if tool.installed_version.is_some() || tool.available_version.is_some() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Version:",
+                Style::default()
+                    .fg(theme.subtext0)
+                    .add_modifier(Modifier::BOLD),
+            )));
+
+            if let Some(installed) = &tool.installed_version {
+                let version_display = if let Some(available) = &tool.available_version {
+                    if installed != available {
+                        let change_type = classify_change(Some(installed), Some(available));
+                        format!("{} → {} ({})", installed, available, change_type.label())
+                    } else {
+                        format!("{} (up to date)", installed)
+                    }
+                } else {
+                    installed.clone()
+                };
+                lines.push(Line::from(vec![
+                    Span::styled("  Installed: ", Style::default().fg(theme.subtext0)),
+                    Span::styled(version_display, Style::default().fg(theme.text)),
+                ]));
+            }
+
+            // Show effective policy
+            let bundles = &app.bundles.items;
+            let config = crate::config::HoardConfig::load().unwrap_or_default();
+            let policy = resolve_policy(&tool, bundles, &config);
+            let source = policy_source(&tool, bundles, &config);
+            lines.push(Line::from(vec![
+                Span::styled("  Policy: ", Style::default().fg(theme.subtext0)),
+                Span::styled(
+                    format!("{} (from: {})", policy, source),
+                    Style::default().fg(theme.peach),
+                ),
+            ]));
         }
 
         lines.push(Line::from(""));

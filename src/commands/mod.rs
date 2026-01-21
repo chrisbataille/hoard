@@ -13,6 +13,7 @@ pub mod helpers;
 pub mod insights;
 pub mod install;
 pub mod misc;
+pub mod policy;
 pub mod sync;
 pub mod updates_cmd;
 pub mod usage;
@@ -82,3 +83,9 @@ pub use config::{
 
 // Re-export completions commands
 pub use completions::{cmd_completions_install, cmd_completions_status, cmd_completions_uninstall};
+
+// Re-export policy commands
+pub use policy::{
+    cmd_policy_clear, cmd_policy_clear_bundle, cmd_policy_clear_source, cmd_policy_set,
+    cmd_policy_set_bundle, cmd_policy_set_default, cmd_policy_set_source, cmd_policy_show,
+};

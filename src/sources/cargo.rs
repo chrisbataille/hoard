@@ -27,13 +27,23 @@ impl PackageSource for CargoSource {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let mut tools = Vec::new();
-        let mut current_crate: Option<String> = None;
+        let mut current_crate: Option<(String, Option<String>)> = None;
 
         for line in stdout.lines() {
             if !line.starts_with(' ') {
                 // Crate name line: "ripgrep v14.1.0:"
-                current_crate = line.split_whitespace().next().map(|s| s.to_string());
-            } else if let Some(ref crate_name) = current_crate {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                let crate_name = parts.first().map(|s| s.to_string());
+                // Extract version from "v14.1.0:" -> "14.1.0"
+                let version = parts.get(1).and_then(|v| {
+                    v.strip_prefix('v')
+                        .unwrap_or(v)
+                        .strip_suffix(':')
+                        .or(Some(v.strip_prefix('v').unwrap_or(v)))
+                        .map(|s| s.to_string())
+                });
+                current_crate = crate_name.map(|name| (name, version));
+            } else if let Some((ref crate_name, ref version)) = current_crate {
                 // Binary line: "    rg"
                 let binary = line.trim();
                 if !binary.is_empty() && is_installed(binary) {
@@ -42,13 +52,17 @@ impl PackageSource for CargoSource {
                         .iter()
                         .any(|kt| kt.name == crate_name || kt.binary == binary);
                     if !dominated {
-                        let tool = Tool::new(crate_name)
+                        let mut tool = Tool::new(crate_name)
                             .with_source(InstallSource::Cargo)
                             .with_binary(binary)
                             .with_category("cli")
                             .with_install_command(self.install_command(crate_name))
                             .installed();
-                        // Description fetched in parallel by cmd_scan
+
+                        // Set installed version if available
+                        if let Some(ver) = version {
+                            tool = tool.with_installed_version(ver);
+                        }
 
                         tools.push(tool);
                     }

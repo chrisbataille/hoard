@@ -13,10 +13,11 @@ pub mod scanner;
 pub mod sources;
 pub mod tui;
 pub mod updates;
+pub mod version_policy;
 
 pub use cli::{
     AiCommands, AiConfigCommands, BundleCommands, Cli, Commands, CompletionsCommands,
-    ConfigCommands, DiscoverCommands, GhCommands, InsightsCommands, UsageCommands,
+    ConfigCommands, DiscoverCommands, GhCommands, InsightsCommands, PolicyCommands, UsageCommands,
 };
 
 // Core commands
@@ -86,6 +87,12 @@ pub use commands::{
 // Completions commands
 pub use commands::{cmd_completions_install, cmd_completions_status, cmd_completions_uninstall};
 
+// Policy commands
+pub use commands::{
+    cmd_policy_clear, cmd_policy_clear_bundle, cmd_policy_clear_source, cmd_policy_set,
+    cmd_policy_set_bundle, cmd_policy_set_default, cmd_policy_set_source, cmd_policy_show,
+};
+
 // Config types
 pub use config::{AiProvider, HoardConfig};
 
@@ -93,7 +100,12 @@ pub use config::{AiProvider, HoardConfig};
 pub use db::{CachedExtraction, Database, GitHubInfo, GitHubInfoInput, ToolUsage};
 
 // Models
-pub use models::{Bundle, Config, InstallSource, Interest, Tool};
+pub use models::{Bundle, Config, InstallSource, Interest, Tool, VersionPolicy};
+
+// Version policy
+pub use version_policy::{
+    UpdateDecision, VersionChange, classify_change, policy_source, resolve_policy, should_update,
+};
 
 // Scanner
 pub use scanner::{

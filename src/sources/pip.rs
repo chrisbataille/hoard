@@ -38,10 +38,12 @@ impl PackageSource for PipSource {
 
         for line in stdout.lines() {
             // Format: "package==version"
-            let package = match line.split("==").next() {
+            let parts: Vec<&str> = line.split("==").collect();
+            let package = match parts.first() {
                 Some(p) => p.to_lowercase().replace('_', "-"),
                 None => continue,
             };
+            let version = parts.get(1).map(|s| s.to_string());
 
             // Skip if already in KNOWN_TOOLS
             if KNOWN_TOOLS.iter().any(|kt| kt.name == package) {
@@ -53,13 +55,17 @@ impl PackageSource for PipSource {
                 continue;
             }
 
-            let tool = Tool::new(&package)
+            let mut tool = Tool::new(&package)
                 .with_source(InstallSource::Pip)
                 .with_binary(&package)
                 .with_category("cli")
                 .with_install_command(self.install_command(&package))
                 .installed();
-            // Description fetched in parallel by cmd_scan
+
+            // Set installed version if available
+            if let Some(ver) = version {
+                tool = tool.with_installed_version(ver);
+            }
 
             tools.push(tool);
         }

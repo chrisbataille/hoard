@@ -38,7 +38,7 @@ impl PackageSource for NpmSource {
         let mut tools = Vec::new();
 
         if let Some(deps) = json.get("dependencies").and_then(|d| d.as_object()) {
-            for (package, _) in deps {
+            for (package, info) in deps {
                 // Skip npm itself
                 if package == "npm" {
                     continue;
@@ -54,13 +54,23 @@ impl PackageSource for NpmSource {
                     continue;
                 }
 
-                let tool = Tool::new(package)
+                // Extract version from package info
+                let version = info
+                    .get("version")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                let mut tool = Tool::new(package)
                     .with_source(InstallSource::Npm)
                     .with_binary(package)
                     .with_category("cli")
                     .with_install_command(self.install_command(package))
                     .installed();
-                // Description fetched in parallel by cmd_scan
+
+                // Set installed version if available
+                if let Some(ver) = version {
+                    tool = tool.with_installed_version(ver);
+                }
 
                 tools.push(tool);
             }

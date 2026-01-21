@@ -79,9 +79,9 @@ impl PackageSource for FlatpakSource {
                 .with_install_command(self.install_command(app_id))
                 .installed();
 
-            // Add version to notes if available
+            // Set installed version if available
             if let Some(ver) = version {
-                tool.notes = Some(format!("Version: {}", ver));
+                tool = tool.with_installed_version(ver);
             }
             // Description fetched in parallel by cmd_scan
 
