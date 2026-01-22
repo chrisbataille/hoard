@@ -76,10 +76,11 @@ pub struct App {
     pub input_mode: InputMode,
     pub search_query: String,
     pub source_filter: Option<String>, // Filter by source (cargo, apt, etc.)
-    pub label_filter: Option<String>,  // Filter by label
+    pub label_filter: HashSet<String>, // Filter by labels (multiple allowed)
     pub favorites_only: bool,          // Filter to show only favorites
     pub show_label_filter_popup: bool, // Show label filter selection popup
     pub label_filter_selected: usize,  // Selected index in label filter popup
+    pub label_filter_scroll: usize,    // Scroll offset for label filter popup
     pub show_label_edit_popup: bool,   // Show label edit popup
     pub label_edit_tool: Option<String>, // Tool being edited in label popup
     pub label_edit_input: String,      // Input field for new label
@@ -211,10 +212,11 @@ impl App {
             input_mode: InputMode::Normal,
             search_query: String::new(),
             source_filter: None,
-            label_filter: None,
+            label_filter: HashSet::new(),
             favorites_only: false,
             show_label_filter_popup: false,
             label_filter_selected: 0,
+            label_filter_scroll: 0,
             show_label_edit_popup: false,
             label_edit_tool: None,
             label_edit_input: String::new(),
@@ -395,10 +397,13 @@ impl App {
                 {
                     return false;
                 }
-                // Filter by label if set
-                if let Some(ref label) = self.label_filter {
+                // Filter by labels if set (tool must have ALL selected labels)
+                if !self.label_filter.is_empty() {
                     let tool_labels = self.cache.labels_cache.get(&t.name);
-                    if !tool_labels.is_some_and(|labels: &Vec<String>| labels.contains(label)) {
+                    let has_all_labels = tool_labels.is_some_and(|labels: &Vec<String>| {
+                        self.label_filter.iter().all(|l| labels.contains(l))
+                    });
+                    if !has_all_labels {
                         return false;
                     }
                 }

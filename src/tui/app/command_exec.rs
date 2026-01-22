@@ -377,18 +377,26 @@ impl App {
         self.show_label_filter_popup = false;
     }
 
-    /// Set label filter
-    pub fn set_label_filter(&mut self, label: Option<&str>) {
-        match label {
-            Some(l) => {
-                self.label_filter = Some(l.to_string());
-                self.set_status(format!("Filtering by label: {}", l), false);
-            }
-            None => {
-                self.label_filter = None;
+    /// Toggle a label in the filter (add if not present, remove if present)
+    pub fn toggle_label_filter(&mut self, label: &str) {
+        if self.label_filter.contains(label) {
+            self.label_filter.remove(label);
+            if self.label_filter.is_empty() {
                 self.set_status("Label filter cleared".to_string(), false);
+            } else {
+                self.set_status(format!("Removed label: {}", label), false);
             }
+        } else {
+            self.label_filter.insert(label.to_string());
+            self.set_status(format!("Added label filter: {}", label), false);
         }
+        self.apply_filter_and_sort();
+    }
+
+    /// Clear all label filters
+    pub fn clear_label_filter(&mut self) {
+        self.label_filter.clear();
+        self.set_status("Label filter cleared".to_string(), false);
         self.apply_filter_and_sort();
     }
 

@@ -672,47 +672,57 @@ pub fn render_label_filter_popup(
     theme: &Theme,
     area: Rect,
 ) {
-    let popup_area = centered_rect(40, 50, area);
+    let popup_area = centered_rect(45, 60, area);
 
     // Get all labels with counts
     let label_counts = db.get_label_counts().unwrap_or_default();
+    let total_items = label_counts.len() + 1; // +1 for "Clear filter" option
+    let visible_height = 10_usize; // Number of visible label items
 
     let mut lines = vec![
         Line::from(""),
         Line::from(Span::styled(
-            "Select a label to filter by:",
+            "Select labels to filter by (Space to toggle):",
             Style::default().fg(theme.text),
         )),
         Line::from(""),
     ];
 
-    // Add "Clear filter" option at the top
-    let clear_style = if app.label_filter_selected == 0 {
-        Style::default().fg(theme.green).bold()
-    } else {
-        Style::default().fg(theme.subtext0)
-    };
-    let clear_prefix = if app.label_filter_selected == 0 {
-        "▶ "
-    } else {
-        "  "
-    };
-    let clear_suffix = if app.label_filter.is_some() {
-        " ✓"
-    } else {
-        ""
-    };
-    lines.push(Line::from(vec![
-        Span::styled(clear_prefix, clear_style),
-        Span::styled(format!("(Clear filter){}", clear_suffix), clear_style),
-    ]));
+    // Add "Clear filter" option at the top (index 0)
+    if app.label_filter_scroll == 0 {
+        let is_selected = app.label_filter_selected == 0;
+        let clear_style = if is_selected {
+            Style::default().fg(theme.green).bold()
+        } else {
+            Style::default().fg(theme.subtext0)
+        };
+        let clear_prefix = if is_selected { "▶ " } else { "  " };
+        lines.push(Line::from(vec![
+            Span::styled(clear_prefix, clear_style),
+            Span::styled("(Clear all filters)", clear_style),
+        ]));
+    }
 
-    // Add labels
-    for (i, (label, count)) in label_counts.iter().enumerate() {
-        let is_selected = app.label_filter_selected == i + 1;
-        let is_active = app.label_filter.as_ref() == Some(label);
+    // Calculate visible range (accounting for scroll)
+    let start_idx = if app.label_filter_scroll == 0 {
+        0
+    } else {
+        app.label_filter_scroll.saturating_sub(1) // -1 because "Clear filter" takes slot 0
+    };
+    let end_idx = (start_idx + visible_height).min(label_counts.len());
 
-        let style = if is_selected {
+    // Add visible labels
+    for (i, (label, count)) in label_counts
+        .iter()
+        .enumerate()
+        .skip(start_idx)
+        .take(end_idx - start_idx)
+    {
+        let list_idx = i + 1; // +1 because index 0 is "Clear filter"
+        let is_cursor = app.label_filter_selected == list_idx;
+        let is_active = app.label_filter.contains(label);
+
+        let style = if is_cursor {
             Style::default().fg(theme.green).bold()
         } else if is_active {
             Style::default().fg(theme.yellow)
@@ -720,23 +730,63 @@ pub fn render_label_filter_popup(
             Style::default().fg(theme.subtext0)
         };
 
-        let prefix = if is_selected { "▶ " } else { "  " };
-        let suffix = if is_active { " ✓" } else { "" };
+        let prefix = if is_cursor { "▶ " } else { "  " };
+        let checkbox = if is_active { "[✓] " } else { "[ ] " };
 
         lines.push(Line::from(vec![
             Span::styled(prefix, style),
-            Span::styled(format!("{} ({}){}", label, count, suffix), style),
+            Span::styled(checkbox, style),
+            Span::styled(format!("{} ({})", label, count), style),
         ]));
+    }
+
+    // Show scroll indicator if needed
+    if total_items > visible_height {
+        lines.push(Line::from(""));
+        let scroll_info = format!(
+            "Showing {}-{} of {}",
+            app.label_filter_scroll + 1,
+            (app.label_filter_scroll + visible_height).min(total_items),
+            total_items
+        );
+        lines.push(Line::from(Span::styled(
+            scroll_info,
+            Style::default().fg(theme.subtext0).italic(),
+        )));
+    }
+
+    // Show active filters summary
+    if !app.label_filter.is_empty() {
+        lines.push(Line::from(""));
+        let active: Vec<_> = app.label_filter.iter().collect();
+        let summary = if active.len() <= 3 {
+            format!(
+                "Active: {}",
+                active
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        } else {
+            format!("Active: {} labels selected", active.len())
+        };
+        lines.push(Line::from(Span::styled(
+            summary,
+            Style::default().fg(theme.yellow),
+        )));
     }
 
     // Add hint
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
-        Span::styled("j/k", Style::default().fg(theme.blue).bold()),
-        Span::styled(" navigate  ", Style::default().fg(theme.subtext0)),
-        Span::styled("Enter", Style::default().fg(theme.green).bold()),
-        Span::styled(" select  ", Style::default().fg(theme.subtext0)),
-        Span::styled("Esc", Style::default().fg(theme.yellow).bold()),
+        Span::styled("j/k/↑↓", Style::default().fg(theme.blue).bold()),
+        Span::styled(" nav  ", Style::default().fg(theme.subtext0)),
+        Span::styled("Space", Style::default().fg(theme.green).bold()),
+        Span::styled(" toggle  ", Style::default().fg(theme.subtext0)),
+        Span::styled("Enter", Style::default().fg(theme.yellow).bold()),
+        Span::styled(" done  ", Style::default().fg(theme.subtext0)),
+        Span::styled("Esc", Style::default().fg(theme.red).bold()),
         Span::styled(" close", Style::default().fg(theme.subtext0)),
     ]));
 

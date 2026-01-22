@@ -331,9 +331,10 @@ fn handle_config_menu(app: &mut App, key: KeyEvent) {
 fn handle_label_filter_popup(app: &mut App, key: KeyEvent, db: &Database) {
     let labels = db.get_all_labels().unwrap_or_default();
     let total = labels.len() + 1; // +1 for "Clear filter" option
+    let visible_height = 10_usize; // Number of visible items in the popup
 
     match key.code {
-        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('l') => {
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('l') | KeyCode::Enter => {
             app.close_label_filter_popup();
         }
         KeyCode::Up | KeyCode::Char('k') => {
@@ -342,18 +343,51 @@ fn handle_label_filter_popup(app: &mut App, key: KeyEvent, db: &Database) {
             } else {
                 app.label_filter_selected = total.saturating_sub(1);
             }
+            // Adjust scroll to keep selection visible
+            if app.label_filter_selected < app.label_filter_scroll {
+                app.label_filter_scroll = app.label_filter_selected;
+            }
         }
         KeyCode::Down | KeyCode::Char('j') => {
             app.label_filter_selected = (app.label_filter_selected + 1) % total.max(1);
-        }
-        KeyCode::Enter | KeyCode::Char(' ') => {
-            if app.label_filter_selected == 0 {
-                // Clear filter
-                app.set_label_filter(None);
-            } else if let Some(label) = labels.get(app.label_filter_selected - 1) {
-                app.set_label_filter(Some(label));
+            // Adjust scroll to keep selection visible
+            if app.label_filter_selected >= app.label_filter_scroll + visible_height {
+                app.label_filter_scroll =
+                    app.label_filter_selected.saturating_sub(visible_height - 1);
             }
-            app.close_label_filter_popup();
+            // Wrap around: reset scroll when wrapping to top
+            if app.label_filter_selected == 0 {
+                app.label_filter_scroll = 0;
+            }
+        }
+        KeyCode::Char(' ') => {
+            if app.label_filter_selected == 0 {
+                // Clear all filters
+                app.clear_label_filter();
+            } else if let Some(label) = labels.get(app.label_filter_selected - 1) {
+                // Toggle this label (don't close popup to allow multiple selections)
+                app.toggle_label_filter(label);
+            }
+        }
+        KeyCode::PageUp => {
+            app.label_filter_selected = app.label_filter_selected.saturating_sub(visible_height);
+            app.label_filter_scroll = app.label_filter_scroll.saturating_sub(visible_height);
+        }
+        KeyCode::PageDown => {
+            app.label_filter_selected =
+                (app.label_filter_selected + visible_height).min(total.saturating_sub(1));
+            if app.label_filter_selected >= app.label_filter_scroll + visible_height {
+                app.label_filter_scroll =
+                    app.label_filter_selected.saturating_sub(visible_height - 1);
+            }
+        }
+        KeyCode::Home => {
+            app.label_filter_selected = 0;
+            app.label_filter_scroll = 0;
+        }
+        KeyCode::End => {
+            app.label_filter_selected = total.saturating_sub(1);
+            app.label_filter_scroll = total.saturating_sub(visible_height);
         }
         _ => {}
     }
@@ -670,7 +704,55 @@ fn handle_command_mode(app: &mut App, key: KeyEvent, db: &Database) {
     }
 }
 
-fn handle_mouse_event(app: &mut App, mouse: crossterm::event::MouseEvent, _db: &Database) {
+fn handle_mouse_event(app: &mut App, mouse: crossterm::event::MouseEvent, db: &Database) {
+    // Handle label filter popup mouse scrolling
+    if app.show_label_filter_popup {
+        let labels = db.get_all_labels().unwrap_or_default();
+        let total = labels.len() + 1; // +1 for "Clear filter" option
+        let visible_height = 10_usize;
+
+        match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                if app.label_filter_selected > 0 {
+                    app.label_filter_selected -= 1;
+                    if app.label_filter_selected < app.label_filter_scroll {
+                        app.label_filter_scroll = app.label_filter_selected;
+                    }
+                }
+            }
+            MouseEventKind::ScrollDown => {
+                if app.label_filter_selected < total.saturating_sub(1) {
+                    app.label_filter_selected += 1;
+                    if app.label_filter_selected >= app.label_filter_scroll + visible_height {
+                        app.label_filter_scroll =
+                            app.label_filter_selected.saturating_sub(visible_height - 1);
+                    }
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    // Handle label edit popup mouse scrolling
+    if app.show_label_edit_popup {
+        let total = app.label_edit_labels.len() + 1; // +1 for input field
+        match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                if app.label_edit_selected > 0 {
+                    app.label_edit_selected -= 1;
+                }
+            }
+            MouseEventKind::ScrollDown => {
+                if app.label_edit_selected < total.saturating_sub(1) {
+                    app.label_edit_selected += 1;
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+
     // Handle install output popup mouse scrolling
     let is_install_op = matches!(
         &app.background_op,
@@ -748,7 +830,7 @@ fn handle_mouse_event(app: &mut App, mouse: crossterm::event::MouseEvent, _db: &
 
             // Check if clicking in tab area
             if app.is_in_tab_area(x, y) {
-                app.click_tab(x, _db);
+                app.click_tab(x, db);
                 return;
             }
 
