@@ -207,13 +207,21 @@ impl App {
             }
 
             // Label commands
-            "label" => {
-                if parts.len() > 1 && parts[1] == "auto" {
+            "label" | "labels" => {
+                if parts.len() == 1 || parts.get(1) == Some(&"filter") {
+                    // :label or :label filter or :labels -> open filter popup
+                    self.exit_command();
+                    self.toggle_label_filter_popup();
+                } else if parts.get(1) == Some(&"auto") {
                     self.auto_label_selected(db);
+                    self.exit_command();
+                } else if parts.get(1) == Some(&"edit") {
+                    self.exit_command();
+                    self.open_label_edit_popup();
                 } else {
-                    self.set_status("Usage: label auto".to_string(), true);
+                    self.set_status("Usage: label [auto|filter|edit]".to_string(), true);
+                    self.exit_command();
                 }
-                self.exit_command();
             }
 
             // Unknown command
@@ -416,6 +424,7 @@ impl App {
             self.label_edit_labels = labels;
             self.label_edit_input = String::new();
             self.label_edit_selected = 0;
+            self.label_edit_suggestions = Vec::new();
             self.show_label_edit_popup = true;
         }
     }
@@ -426,19 +435,62 @@ impl App {
         self.label_edit_tool = None;
         self.label_edit_input.clear();
         self.label_edit_labels.clear();
+        self.label_edit_suggestions.clear();
         self.label_edit_selected = 0;
     }
 
+    /// Update label suggestions based on current input
+    pub fn update_label_suggestions(&mut self, db: &Database) {
+        use super::fuzzy_match;
+
+        if self.label_edit_input.is_empty() {
+            self.label_edit_suggestions.clear();
+            return;
+        }
+
+        // Get all unique labels from the database
+        let all_labels = db.get_all_labels().unwrap_or_default();
+
+        // Filter by fuzzy match and exclude labels already on the tool
+        let query = self.label_edit_input.to_lowercase();
+        let mut matches: Vec<(String, i32)> = all_labels
+            .into_iter()
+            .filter(|label| {
+                // Exclude labels already on this tool
+                !self.label_edit_labels.contains(label)
+            })
+            .filter_map(|label| fuzzy_match(&query, &label).map(|score| (label, score)))
+            .collect();
+
+        // Sort by score (higher = better match)
+        matches.sort_by(|a, b| b.1.cmp(&a.1));
+
+        // Take top 5 suggestions
+        self.label_edit_suggestions = matches.into_iter().take(5).map(|(l, _)| l).collect();
+    }
+
     /// Add a label to the tool being edited
+    /// If a suggestion is selected, add that; otherwise add the typed input
     pub fn label_edit_add(&mut self, db: &Database) {
-        let label = self
-            .label_edit_input
-            .trim()
-            .to_lowercase()
-            .replace(' ', "-");
+        let suggestions_count = self.label_edit_suggestions.len();
+
+        // Determine which label to add
+        let label = if self.label_edit_selected > 0 && self.label_edit_selected <= suggestions_count
+        {
+            // Selected a suggestion
+            self.label_edit_suggestions[self.label_edit_selected - 1].clone()
+        } else {
+            // Use typed input
+            self.label_edit_input
+                .trim()
+                .to_lowercase()
+                .replace(' ', "-")
+        };
+
         if label.is_empty() {
             return;
         }
+
         if let Some(ref tool_name) = self.label_edit_tool
             && !self.label_edit_labels.contains(&label)
             && db
@@ -453,16 +505,23 @@ impl App {
                 .insert(tool_name.clone(), self.label_edit_labels.clone());
             self.set_status(format!("Added label: {}", label), false);
         }
+
+        // Clear input and suggestions, reset selection
         self.label_edit_input.clear();
+        self.label_edit_suggestions.clear();
+        self.label_edit_selected = 0;
     }
 
     /// Remove the selected label from the tool being edited
     pub fn label_edit_remove(&mut self, db: &Database) {
-        // selected 0 is input field, 1+ are labels
-        if self.label_edit_selected == 0 || self.label_edit_labels.is_empty() {
+        // Selection layout: 0=input, 1..=suggestions, then existing labels
+        let labels_start = 1 + self.label_edit_suggestions.len();
+
+        if self.label_edit_selected < labels_start || self.label_edit_labels.is_empty() {
             return;
         }
-        let label_idx = self.label_edit_selected - 1;
+
+        let label_idx = self.label_edit_selected - labels_start;
         if label_idx < self.label_edit_labels.len()
             && let Some(ref tool_name) = self.label_edit_tool
         {
@@ -473,10 +532,6 @@ impl App {
                 self.cache
                     .labels_cache
                     .insert(tool_name.clone(), self.label_edit_labels.clone());
-                // Adjust selection
-                if self.label_edit_selected > self.label_edit_labels.len() {
-                    self.label_edit_selected = self.label_edit_labels.len().max(1);
-                }
                 self.set_status(format!("Removed label: {}", label), false);
             }
         }

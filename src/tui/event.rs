@@ -493,58 +493,78 @@ fn get_filtered_label_list(app: &App, _db: &Database) -> Vec<(String, usize)> {
 }
 
 fn handle_label_edit_popup(app: &mut App, key: KeyEvent, db: &Database) {
-    let total = app.label_edit_labels.len() + 1; // +1 for input field
+    // Total items: input (0) + suggestions (1..=n) + existing labels (n+1..)
+    let suggestions_count = app.label_edit_suggestions.len();
+    let labels_count = app.label_edit_labels.len();
+    let total = 1 + suggestions_count + labels_count;
+
+    // Index where existing labels start
+    let labels_start = 1 + suggestions_count;
 
     match key.code {
-        KeyCode::Esc | KeyCode::Char('q') => {
+        KeyCode::Esc => {
             app.close_label_edit_popup();
         }
-        KeyCode::Up | KeyCode::Char('k') if app.label_edit_selected > 0 => {
-            app.label_edit_selected -= 1;
+        KeyCode::Up => {
+            if app.label_edit_selected > 0 {
+                app.label_edit_selected -= 1;
+            }
         }
-        KeyCode::Down | KeyCode::Char('j') => {
-            if app.label_edit_selected < total - 1 {
+        KeyCode::Down => {
+            if app.label_edit_selected < total.saturating_sub(1) {
                 app.label_edit_selected += 1;
             }
         }
         KeyCode::Tab => {
-            // Cycle through items
-            app.label_edit_selected = (app.label_edit_selected + 1) % total.max(1);
-        }
-        KeyCode::BackTab => {
-            // Cycle backwards
-            if app.label_edit_selected > 0 {
-                app.label_edit_selected -= 1;
+            // Tab on input or suggestion = add label
+            if app.label_edit_selected <= suggestions_count {
+                app.label_edit_add(db);
             } else {
-                app.label_edit_selected = total.saturating_sub(1);
+                // On existing label: cycle to next
+                app.label_edit_selected = (app.label_edit_selected + 1) % total.max(1);
             }
         }
         KeyCode::Enter => {
-            if app.label_edit_selected == 0 {
-                // Add the label from input
+            // Add label if on input or suggestion
+            if app.label_edit_selected <= suggestions_count {
                 app.label_edit_add(db);
             }
         }
-        KeyCode::Char('d') | KeyCode::Delete => {
-            // Delete selected label
-            if app.label_edit_selected > 0 {
+        KeyCode::Delete => {
+            // Delete selected existing label
+            if app.label_edit_selected >= labels_start {
                 app.label_edit_remove(db);
+                // Update total after removal
+                let new_labels_count = app.label_edit_labels.len();
+                let new_total = 1 + app.label_edit_suggestions.len() + new_labels_count;
+                if app.label_edit_selected >= new_total {
+                    app.label_edit_selected = new_total.saturating_sub(1);
+                }
             }
         }
         KeyCode::Backspace => {
             if app.label_edit_selected == 0 {
+                // Delete char from input
                 app.label_edit_input.pop();
-            } else {
-                // Also delete label when backspace on a label
+                app.update_label_suggestions(db);
+                // Keep selection at 0 (input)
+            } else if app.label_edit_selected >= labels_start {
+                // Delete existing label
                 app.label_edit_remove(db);
+                let new_labels_count = app.label_edit_labels.len();
+                let new_total = 1 + app.label_edit_suggestions.len() + new_labels_count;
+                if app.label_edit_selected >= new_total {
+                    app.label_edit_selected = new_total.saturating_sub(1);
+                }
             }
         }
         KeyCode::Char(c) => {
-            if app.label_edit_selected == 0 {
-                // Only alphanumeric and hyphen allowed
-                if c.is_alphanumeric() || c == '-' || c == '_' {
-                    app.label_edit_input.push(c);
-                }
+            // Always type into input (focus returns to input for typing)
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                app.label_edit_input.push(c);
+                app.update_label_suggestions(db);
+                // Reset selection to input when typing
+                app.label_edit_selected = 0;
             }
         }
         _ => {}

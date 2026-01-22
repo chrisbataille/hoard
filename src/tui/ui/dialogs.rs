@@ -924,9 +924,11 @@ fn get_popup_label_list(app: &App, _db: &Database) -> Vec<(String, usize)> {
 
 /// Render label edit popup
 pub fn render_label_edit_popup(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
-    let popup_area = centered_rect(50, 60, area);
+    let popup_area = centered_rect(50, 70, area);
 
     let tool_name = app.label_edit_tool.as_deref().unwrap_or("Unknown");
+    let suggestions_count = app.label_edit_suggestions.len();
+    let labels_start = 1 + suggestions_count;
 
     let mut lines = vec![
         Line::from(""),
@@ -937,7 +939,7 @@ pub fn render_label_edit_popup(frame: &mut Frame, app: &App, theme: &Theme, area
         Line::from(""),
     ];
 
-    // Input field for new label
+    // Input field for new label (index 0)
     let input_selected = app.label_edit_selected == 0;
     let input_style = if input_selected {
         Style::default().fg(theme.green).bold()
@@ -946,27 +948,61 @@ pub fn render_label_edit_popup(frame: &mut Frame, app: &App, theme: &Theme, area
     };
     let input_prefix = if input_selected { "▶ " } else { "  " };
     let cursor = if input_selected { "▌" } else { "" };
+    let placeholder = if app.label_edit_input.is_empty() && input_selected {
+        "type to search or add..."
+    } else {
+        ""
+    };
 
     lines.push(Line::from(vec![
         Span::styled(input_prefix, input_style),
         Span::styled("Add: ", input_style),
         Span::styled(
-            format!("{}{}", app.label_edit_input, cursor),
-            Style::default().fg(theme.text).bg(if input_selected {
-                theme.surface0
+            if app.label_edit_input.is_empty() {
+                format!("{}{}", placeholder, cursor)
             } else {
-                theme.base
-            }),
+                format!("{}{}", app.label_edit_input, cursor)
+            },
+            if app.label_edit_input.is_empty() {
+                Style::default().fg(theme.subtext0).italic()
+            } else {
+                Style::default().fg(theme.text)
+            },
         ),
     ]));
 
+    // Show suggestions if any (indices 1..=suggestions_count)
+    if !app.label_edit_suggestions.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "Suggestions:",
+            Style::default().fg(theme.subtext0),
+        )));
+
+        for (i, suggestion) in app.label_edit_suggestions.iter().enumerate() {
+            let idx = i + 1;
+            let is_selected = app.label_edit_selected == idx;
+            let style = if is_selected {
+                Style::default().fg(theme.green).bold()
+            } else {
+                Style::default().fg(theme.blue)
+            };
+            let prefix = if is_selected { "▶ " } else { "  " };
+
+            lines.push(Line::from(vec![
+                Span::styled(prefix, style),
+                Span::styled(suggestion.clone(), style),
+            ]));
+        }
+    }
+
+    // Show existing labels on this tool
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "Current labels:",
         Style::default().fg(theme.subtext0),
     )));
 
-    // Show existing labels
     if app.label_edit_labels.is_empty() {
         lines.push(Line::from(Span::styled(
             "  (no labels)",
@@ -974,14 +1010,15 @@ pub fn render_label_edit_popup(frame: &mut Frame, app: &App, theme: &Theme, area
         )));
     } else {
         for (i, label) in app.label_edit_labels.iter().enumerate() {
-            let is_selected = app.label_edit_selected == i + 1;
+            let idx = labels_start + i;
+            let is_selected = app.label_edit_selected == idx;
             let style = if is_selected {
                 Style::default().fg(theme.yellow).bold()
             } else {
                 Style::default().fg(theme.teal)
             };
             let prefix = if is_selected { "▶ " } else { "  " };
-            let suffix = if is_selected { "  [d] to delete" } else { "" };
+            let suffix = if is_selected { "  [Del] remove" } else { "" };
 
             lines.push(Line::from(vec![
                 Span::styled(prefix, style),
@@ -994,12 +1031,12 @@ pub fn render_label_edit_popup(frame: &mut Frame, app: &App, theme: &Theme, area
     // Add hints
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
-        Span::styled("Tab", Style::default().fg(theme.blue).bold()),
-        Span::styled(" navigate  ", Style::default().fg(theme.subtext0)),
-        Span::styled("Enter", Style::default().fg(theme.green).bold()),
-        Span::styled(" add  ", Style::default().fg(theme.subtext0)),
-        Span::styled("d", Style::default().fg(theme.red).bold()),
-        Span::styled(" delete  ", Style::default().fg(theme.subtext0)),
+        Span::styled("↑↓", Style::default().fg(theme.blue).bold()),
+        Span::styled(" nav ", Style::default().fg(theme.subtext0)),
+        Span::styled("Enter/Tab", Style::default().fg(theme.green).bold()),
+        Span::styled(" add ", Style::default().fg(theme.subtext0)),
+        Span::styled("Del", Style::default().fg(theme.red).bold()),
+        Span::styled(" remove ", Style::default().fg(theme.subtext0)),
         Span::styled("Esc", Style::default().fg(theme.yellow).bold()),
         Span::styled(" close", Style::default().fg(theme.subtext0)),
     ]));

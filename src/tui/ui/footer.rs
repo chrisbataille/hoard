@@ -125,6 +125,16 @@ fn build_normal_mode_footer(app: &App, theme: &Theme) -> Vec<Span<'static>> {
         Tab::Discover => unreachable!(), // Handled above
     }
 
+    // Label hints (for tabs with tools)
+    if matches!(app.tab, Tab::Installed | Tab::Available | Tab::Updates) {
+        spans.extend([
+            Span::styled(" l", Style::default().fg(theme.teal)),
+            Span::styled(" filter ", Style::default().fg(theme.subtext0)),
+            Span::styled(" L", Style::default().fg(theme.teal)),
+            Span::styled(" labels ", Style::default().fg(theme.subtext0)),
+        ]);
+    }
+
     spans.extend([
         Span::styled(" ?", Style::default().fg(theme.blue)),
         Span::styled(" help", Style::default().fg(theme.subtext0)),

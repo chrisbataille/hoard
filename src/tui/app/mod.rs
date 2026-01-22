@@ -85,9 +85,10 @@ pub struct App {
     pub label_filter_sort: types::LabelFilterSort, // Sort mode for label list
     pub show_label_edit_popup: bool,   // Show label edit popup
     pub label_edit_tool: Option<String>, // Tool being edited in label popup
-    pub label_edit_input: String,      // Input field for new label
-    pub label_edit_selected: usize, // Selected index in label edit popup (0 = input, 1+ = existing labels)
-    pub label_edit_labels: Vec<String>, // Current labels for the tool being edited
+    pub label_edit_input: String,      // Input field for new/search label
+    pub label_edit_selected: usize,    // Selected: 0=input, 1..=suggestions, then existing labels
+    pub label_edit_labels: Vec<String>, // Current labels on the tool being edited
+    pub label_edit_suggestions: Vec<String>, // Fuzzy-matched existing labels from all tools
 
     // Tool list state
     pub all_tools: Vec<Tool>, // All tools for current tab (unfiltered)
@@ -226,6 +227,7 @@ impl App {
             label_edit_input: String::new(),
             label_edit_selected: 0,
             label_edit_labels: Vec::new(),
+            label_edit_suggestions: Vec::new(),
             all_tools,
             tools,
             selected_index: 0,
