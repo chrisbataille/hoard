@@ -125,6 +125,16 @@ fn build_normal_mode_footer(app: &App, theme: &Theme) -> Vec<Span<'static>> {
         Tab::Discover => unreachable!(), // Handled above
     }
 
+    // Label hints (for tabs with tools)
+    if matches!(app.tab, Tab::Installed | Tab::Available | Tab::Updates) {
+        spans.extend([
+            Span::styled(" l", Style::default().fg(theme.teal)),
+            Span::styled(" filter ", Style::default().fg(theme.subtext0)),
+            Span::styled(" L", Style::default().fg(theme.teal)),
+            Span::styled(" labels ", Style::default().fg(theme.subtext0)),
+        ]);
+    }
+
     spans.extend([
         Span::styled(" ?", Style::default().fg(theme.blue)),
         Span::styled(" help", Style::default().fg(theme.subtext0)),
@@ -136,7 +146,11 @@ fn build_normal_mode_footer(app: &App, theme: &Theme) -> Vec<Span<'static>> {
             format!("{} selected", app.selection_count()),
             Style::default().fg(theme.blue),
         ));
-    } else if !app.search_query.is_empty() || app.source_filter.is_some() || app.favorites_only {
+    } else if !app.search_query.is_empty()
+        || app.source_filter.is_some()
+        || !app.label_filter.is_empty()
+        || app.favorites_only
+    {
         spans.extend(build_filter_status(app, theme));
     }
 
@@ -215,7 +229,10 @@ fn build_filter_status(app: &App, theme: &Theme) -> Vec<Span<'static>> {
 
     if app.favorites_only {
         spans.push(Span::styled("★", Style::default().fg(theme.yellow)));
-        if app.source_filter.is_some() || !app.search_query.is_empty() {
+        if app.source_filter.is_some()
+            || !app.label_filter.is_empty()
+            || !app.search_query.is_empty()
+        {
             spans.push(Span::styled(" ", Style::default()));
         }
     }
@@ -225,6 +242,23 @@ fn build_filter_status(app: &App, theme: &Theme) -> Vec<Span<'static>> {
             source.clone(),
             Style::default().fg(theme.text),
         ));
+        if !app.label_filter.is_empty() || !app.search_query.is_empty() {
+            spans.push(Span::styled(" ", Style::default()));
+        }
+    }
+    if !app.label_filter.is_empty() {
+        spans.push(Span::styled("labels:", Style::default().fg(theme.teal)));
+        let labels: Vec<_> = app.label_filter.iter().collect();
+        let label_text = if labels.len() <= 2 {
+            labels
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        } else {
+            format!("{}+{}", labels[0], labels.len() - 1)
+        };
+        spans.push(Span::styled(label_text, Style::default().fg(theme.text)));
         if !app.search_query.is_empty() {
             spans.push(Span::styled(" ", Style::default()));
         }

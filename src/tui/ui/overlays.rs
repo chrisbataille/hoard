@@ -107,6 +107,19 @@ pub fn render_help_overlay(frame: &mut Frame, theme: &Theme, area: Rect) {
         ]),
         Line::from(""),
         Line::from(vec![Span::styled(
+            "Labels",
+            Style::default().fg(theme.blue).bold(),
+        )]),
+        Line::from(vec![
+            Span::styled("  l        ", Style::default().fg(theme.teal)),
+            Span::styled("Open label filter", Style::default().fg(theme.text)),
+        ]),
+        Line::from(vec![
+            Span::styled("  L        ", Style::default().fg(theme.teal)),
+            Span::styled("Edit tool labels", Style::default().fg(theme.text)),
+        ]),
+        Line::from(""),
+        Line::from(vec![Span::styled(
             "Actions",
             Style::default().fg(theme.blue).bold(),
         )]),

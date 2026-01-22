@@ -824,6 +824,30 @@ impl DiscoverSortBy {
     }
 }
 
+/// Sort options for label filter popup
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LabelFilterSort {
+    #[default]
+    Count,
+    Name,
+}
+
+impl LabelFilterSort {
+    pub fn toggle(&self) -> LabelFilterSort {
+        match self {
+            LabelFilterSort::Count => LabelFilterSort::Name,
+            LabelFilterSort::Name => LabelFilterSort::Count,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            LabelFilterSort::Count => "count",
+            LabelFilterSort::Name => "name",
+        }
+    }
+}
+
 /// Available commands for the command palette with descriptions
 pub const COMMANDS: &[(&str, &str)] = &[
     ("q", "quit - exit the application"),
@@ -878,4 +902,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("create-theme", "create custom theme file"),
     ("new-theme", "create custom theme file"),
     ("edit-theme", "show custom theme file path"),
+    ("label", "label [auto|filter|edit|clear] - manage labels"),
+    ("label auto", "auto-label selected tool(s)"),
+    ("label filter", "open label filter popup"),
+    ("label edit", "edit labels on selected tool"),
+    ("label clear", "clear all label filters"),
+    ("labels", "open label filter popup"),
 ];

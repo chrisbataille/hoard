@@ -196,6 +196,16 @@ fn handle_key_event(app: &mut App, key: KeyEvent, db: &Database) {
         return;
     }
 
+    if app.show_label_filter_popup {
+        handle_label_filter_popup(app, key, db);
+        return;
+    }
+
+    if app.show_label_edit_popup {
+        handle_label_edit_popup(app, key, db);
+        return;
+    }
+
     // Clear status message on any key press
     app.clear_status();
 
@@ -318,6 +328,263 @@ fn handle_config_menu(app: &mut App, key: KeyEvent) {
     }
 }
 
+fn handle_label_filter_popup(app: &mut App, key: KeyEvent, db: &Database) {
+    // Get filtered labels based on current selection and search
+    let filtered_labels = get_filtered_label_list(app, db);
+    let total = filtered_labels.len() + 1; // +1 for "Clear filter" option
+    let visible_height = 10_usize;
+
+    match key.code {
+        KeyCode::Esc | KeyCode::Enter => {
+            // Just close the popup (Enter confirms current selection)
+            app.close_label_filter_popup();
+        }
+        KeyCode::Char(' ') => {
+            // Space toggles selection (like a checkbox)
+            if app.label_filter_selected == 0 {
+                app.clear_label_filter();
+            } else if let Some((label, _)) = filtered_labels.get(app.label_filter_selected - 1) {
+                app.toggle_label_filter(label);
+            }
+        }
+        KeyCode::Delete => {
+            // Delete clears all filters
+            app.clear_label_filter();
+        }
+        KeyCode::Tab => {
+            // Tab cycles through items
+            app.label_filter_selected = (app.label_filter_selected + 1) % total.max(1);
+            if app.label_filter_selected >= app.label_filter_scroll + visible_height {
+                app.label_filter_scroll =
+                    app.label_filter_selected.saturating_sub(visible_height - 1);
+            }
+            if app.label_filter_selected == 0 {
+                app.label_filter_scroll = 0;
+            }
+        }
+        KeyCode::Up => {
+            if app.label_filter_selected > 0 {
+                app.label_filter_selected -= 1;
+            } else {
+                app.label_filter_selected = total.saturating_sub(1);
+            }
+            if app.label_filter_selected < app.label_filter_scroll {
+                app.label_filter_scroll = app.label_filter_selected;
+            }
+        }
+        KeyCode::Down => {
+            app.label_filter_selected = (app.label_filter_selected + 1) % total.max(1);
+            if app.label_filter_selected >= app.label_filter_scroll + visible_height {
+                app.label_filter_scroll =
+                    app.label_filter_selected.saturating_sub(visible_height - 1);
+            }
+            if app.label_filter_selected == 0 {
+                app.label_filter_scroll = 0;
+            }
+        }
+        KeyCode::Backspace => {
+            if app.label_filter_search.is_empty() {
+                // Backspace on empty search clears all filters
+                app.clear_label_filter();
+            } else {
+                app.label_filter_search.pop();
+                // Reset selection to first label (not "clear") when search changes
+                let new_labels = get_filtered_label_list(app, db);
+                app.label_filter_selected = if new_labels.is_empty() { 0 } else { 1 };
+                app.label_filter_scroll = 0;
+            }
+        }
+        KeyCode::PageUp => {
+            app.label_filter_selected = app.label_filter_selected.saturating_sub(visible_height);
+            app.label_filter_scroll = app.label_filter_scroll.saturating_sub(visible_height);
+        }
+        KeyCode::PageDown => {
+            app.label_filter_selected =
+                (app.label_filter_selected + visible_height).min(total.saturating_sub(1));
+            if app.label_filter_selected >= app.label_filter_scroll + visible_height {
+                app.label_filter_scroll =
+                    app.label_filter_selected.saturating_sub(visible_height - 1);
+            }
+        }
+        KeyCode::Home => {
+            app.label_filter_selected = 0;
+            app.label_filter_scroll = 0;
+        }
+        KeyCode::End => {
+            app.label_filter_selected = total.saturating_sub(1);
+            app.label_filter_scroll = total.saturating_sub(visible_height);
+        }
+        KeyCode::Char(c) => {
+            // Ctrl+S to toggle sort
+            if c == 's' && key.modifiers.contains(KeyModifiers::CONTROL) {
+                app.label_filter_sort = app.label_filter_sort.toggle();
+                return;
+            }
+            // Add character to search
+            app.label_filter_search.push(c);
+            // Reset selection to first label (not "clear") when search changes
+            let new_labels = get_filtered_label_list(app, db);
+            app.label_filter_selected = if new_labels.is_empty() { 0 } else { 1 };
+            app.label_filter_scroll = 0;
+        }
+        _ => {}
+    }
+}
+
+/// Get the filtered and sorted list of labels for the popup
+/// Returns (label_name, count) pairs
+///
+/// Search behavior:
+/// - "alt" = find tools with a label fuzzy-matching "alt"
+/// - "a l t" = find tools with (label matching "a") AND (label matching "l") AND (label matching "t")
+///   where each term can match a DIFFERENT label
+fn get_filtered_label_list(app: &App, _db: &Database) -> Vec<(String, usize)> {
+    use super::app::{LabelFilterSort, fuzzy_match};
+
+    // Helper: check if a tool's labels match the search criteria
+    let tool_matches_search = |tool_labels: &[String]| -> bool {
+        if app.label_filter_search.is_empty() {
+            return true;
+        }
+
+        let search_terms: Vec<&str> = app.label_filter_search.split_whitespace().collect();
+
+        if search_terms.len() == 1 {
+            // Single term: must fuzzy-match at least one label
+            let term = search_terms[0];
+            tool_labels.iter().any(|l| fuzzy_match(term, l).is_some())
+        } else {
+            // Multiple terms: each term must match at least one label (can be different labels)
+            search_terms
+                .iter()
+                .all(|term| tool_labels.iter().any(|l| fuzzy_match(term, l).is_some()))
+        }
+    };
+
+    // Get tools that match:
+    // 1. Currently selected labels (if any)
+    // 2. Search criteria (if any)
+    let matching_tools: Vec<_> = app
+        .all_tools
+        .iter()
+        .filter(|t| {
+            if let Some(labels) = app.cache.labels_cache.get(&t.name) {
+                // Must match all selected labels
+                let matches_selection = app.label_filter.is_empty()
+                    || app.label_filter.iter().all(|l| labels.contains(l));
+                // Must match search criteria
+                let matches_search = tool_matches_search(labels);
+                matches_selection && matches_search
+            } else {
+                false
+            }
+        })
+        .collect();
+
+    // Count labels across matching tools
+    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for tool in &matching_tools {
+        if let Some(labels) = app.cache.labels_cache.get(&tool.name) {
+            for label in labels {
+                *counts.entry(label.clone()).or_insert(0) += 1;
+            }
+        }
+    }
+
+    let mut filtered: Vec<(String, usize)> = counts.into_iter().collect();
+
+    // Sort
+    match app.label_filter_sort {
+        LabelFilterSort::Count => {
+            filtered.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        }
+        LabelFilterSort::Name => {
+            filtered.sort_by(|a, b| a.0.cmp(&b.0));
+        }
+    }
+
+    filtered
+}
+
+fn handle_label_edit_popup(app: &mut App, key: KeyEvent, db: &Database) {
+    // Total items: input (0) + suggestions (1..=n) + existing labels (n+1..)
+    let suggestions_count = app.label_edit_suggestions.len();
+    let labels_count = app.label_edit_labels.len();
+    let total = 1 + suggestions_count + labels_count;
+
+    // Index where existing labels start
+    let labels_start = 1 + suggestions_count;
+
+    match key.code {
+        KeyCode::Esc => {
+            app.close_label_edit_popup();
+        }
+        KeyCode::Up => {
+            if app.label_edit_selected > 0 {
+                app.label_edit_selected -= 1;
+            }
+        }
+        KeyCode::Down => {
+            if app.label_edit_selected < total.saturating_sub(1) {
+                app.label_edit_selected += 1;
+            }
+        }
+        KeyCode::Tab => {
+            // Tab on input or suggestion = add label
+            if app.label_edit_selected <= suggestions_count {
+                app.label_edit_add(db);
+            } else {
+                // On existing label: cycle to next
+                app.label_edit_selected = (app.label_edit_selected + 1) % total.max(1);
+            }
+        }
+        KeyCode::Enter => {
+            // Add label if on input or suggestion
+            if app.label_edit_selected <= suggestions_count {
+                app.label_edit_add(db);
+            }
+        }
+        KeyCode::Delete => {
+            // Delete selected existing label
+            if app.label_edit_selected >= labels_start {
+                app.label_edit_remove(db);
+                // Update total after removal
+                let new_labels_count = app.label_edit_labels.len();
+                let new_total = 1 + app.label_edit_suggestions.len() + new_labels_count;
+                if app.label_edit_selected >= new_total {
+                    app.label_edit_selected = new_total.saturating_sub(1);
+                }
+            }
+        }
+        KeyCode::Backspace => {
+            if app.label_edit_selected == 0 {
+                // Delete char from input
+                app.label_edit_input.pop();
+                app.update_label_suggestions(db);
+                // Keep selection at 0 (input)
+            } else if app.label_edit_selected >= labels_start {
+                // Delete existing label
+                app.label_edit_remove(db);
+                let new_labels_count = app.label_edit_labels.len();
+                let new_total = 1 + app.label_edit_suggestions.len() + new_labels_count;
+                if app.label_edit_selected >= new_total {
+                    app.label_edit_selected = new_total.saturating_sub(1);
+                }
+            }
+        }
+        KeyCode::Char(c) => {
+            // Always type into input (focus returns to input for typing)
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                app.label_edit_input.push(c);
+                app.update_label_suggestions(db);
+                // Reset selection to input when typing
+                app.label_edit_selected = 0;
+            }
+        }
+        _ => {}
+    }
+}
+
 fn handle_normal_mode(app: &mut App, key: KeyEvent, db: &Database) {
     match key.code {
         // Quit
@@ -398,6 +665,12 @@ fn handle_normal_mode(app: &mut App, key: KeyEvent, db: &Database) {
 
         // Toggle favorites-only filter
         KeyCode::Char('F') => app.toggle_favorites_filter(),
+
+        // Label filter popup
+        KeyCode::Char('l') if app.tab != Tab::Discover => app.toggle_label_filter_popup(),
+
+        // Label edit popup (for editing labels on selected tool)
+        KeyCode::Char('L') if app.tab != Tab::Discover => app.open_label_edit_popup(),
 
         // Command palette (vim-style)
         KeyCode::Char(':') => app.enter_command(),
@@ -564,7 +837,55 @@ fn handle_command_mode(app: &mut App, key: KeyEvent, db: &Database) {
     }
 }
 
-fn handle_mouse_event(app: &mut App, mouse: crossterm::event::MouseEvent, _db: &Database) {
+fn handle_mouse_event(app: &mut App, mouse: crossterm::event::MouseEvent, db: &Database) {
+    // Handle label filter popup mouse scrolling
+    if app.show_label_filter_popup {
+        let filtered_labels = get_filtered_label_list(app, db);
+        let total = filtered_labels.len() + 1; // +1 for "Clear filter" option
+        let visible_height = 10_usize;
+
+        match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                if app.label_filter_selected > 0 {
+                    app.label_filter_selected -= 1;
+                    if app.label_filter_selected < app.label_filter_scroll {
+                        app.label_filter_scroll = app.label_filter_selected;
+                    }
+                }
+            }
+            MouseEventKind::ScrollDown => {
+                if app.label_filter_selected < total.saturating_sub(1) {
+                    app.label_filter_selected += 1;
+                    if app.label_filter_selected >= app.label_filter_scroll + visible_height {
+                        app.label_filter_scroll =
+                            app.label_filter_selected.saturating_sub(visible_height - 1);
+                    }
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    // Handle label edit popup mouse scrolling
+    if app.show_label_edit_popup {
+        let total = app.label_edit_labels.len() + 1; // +1 for input field
+        match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                if app.label_edit_selected > 0 {
+                    app.label_edit_selected -= 1;
+                }
+            }
+            MouseEventKind::ScrollDown => {
+                if app.label_edit_selected < total.saturating_sub(1) {
+                    app.label_edit_selected += 1;
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+
     // Handle install output popup mouse scrolling
     let is_install_op = matches!(
         &app.background_op,
@@ -642,7 +963,7 @@ fn handle_mouse_event(app: &mut App, mouse: crossterm::event::MouseEvent, _db: &
 
             // Check if clicking in tab area
             if app.is_in_tab_area(x, y) {
-                app.click_tab(x, _db);
+                app.click_tab(x, db);
                 return;
             }
 

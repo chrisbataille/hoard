@@ -52,6 +52,14 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for branching strategy and commit conve
 - `docs/MIGRATION.md` - If commands changed
 - `docs/IMPLEMENTATION_PLAN.md` - Mark tasks complete
 
+### Feature Completeness Requirements
+**IMPORTANT**: Every new feature must be complete across all interfaces:
+- **CLI & TUI**: Every feature must work in both CLI and TUI
+- **TUI Help**: Add keybindings to the help popup (`?` key)
+- **Command Palette**: Add `:command` equivalents for all features
+- **Popup Scrolling**: All popup screens must support keyboard (↑↓/j/k, PageUp/Down) AND mousewheel scrolling
+- **Status Bar**: Add relevant keybinding hints to the footer
+
 ---
 
 ## Security Rules (MANDATORY)

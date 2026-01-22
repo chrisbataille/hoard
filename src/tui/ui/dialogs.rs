@@ -663,3 +663,400 @@ pub fn render_confirmation_dialog(frame: &mut Frame, app: &App, theme: &Theme, a
     frame.render_widget(Clear, popup_area);
     frame.render_widget(popup, popup_area);
 }
+
+/// Render label filter popup
+pub fn render_label_filter_popup(
+    frame: &mut Frame,
+    app: &App,
+    db: &Database,
+    theme: &Theme,
+    area: Rect,
+) {
+    let popup_area = centered_rect(50, 70, area);
+
+    // Get filtered and sorted labels (same logic as event handler)
+    let filtered_labels = get_popup_label_list(app, db);
+    let total_items = filtered_labels.len() + 1; // +1 for "Clear filter" option
+    let visible_height = 10_usize;
+
+    let mut lines = vec![];
+
+    // Search input line
+    lines.push(Line::from(vec![
+        Span::styled("Search: ", Style::default().fg(theme.blue).bold()),
+        Span::styled(
+            if app.label_filter_search.is_empty() {
+                "type to filter...".to_string()
+            } else {
+                app.label_filter_search.clone()
+            },
+            if app.label_filter_search.is_empty() {
+                Style::default().fg(theme.subtext0).italic()
+            } else {
+                Style::default().fg(theme.text)
+            },
+        ),
+        Span::styled("▏", Style::default().fg(theme.green)), // Cursor
+    ]));
+
+    // Sort indicator
+    lines.push(Line::from(vec![
+        Span::styled("Sort: ", Style::default().fg(theme.subtext0)),
+        Span::styled(
+            app.label_filter_sort.label(),
+            Style::default().fg(theme.mauve),
+        ),
+        Span::styled(" (Ctrl+S to toggle)", Style::default().fg(theme.subtext0)),
+    ]));
+
+    lines.push(Line::from(""));
+
+    // Add "Clear filter" option at the top (index 0)
+    let show_clear = app.label_filter_scroll == 0;
+    if show_clear {
+        let is_selected = app.label_filter_selected == 0;
+        let clear_style = if is_selected {
+            Style::default().fg(theme.green).bold()
+        } else {
+            Style::default().fg(theme.subtext0)
+        };
+        let clear_prefix = if is_selected { "▶ " } else { "  " };
+        let filter_count = app.label_filter.len();
+        let clear_text = if filter_count > 0 {
+            format!("(Clear {} selected)", filter_count)
+        } else {
+            "(No filters active)".to_string()
+        };
+        lines.push(Line::from(vec![
+            Span::styled(clear_prefix, clear_style),
+            Span::styled(clear_text, clear_style),
+        ]));
+    }
+
+    // Calculate visible range (accounting for scroll and "Clear filter" taking slot 0)
+    let start_idx = if app.label_filter_scroll == 0 {
+        0
+    } else {
+        app.label_filter_scroll.saturating_sub(1)
+    };
+    let end_idx = (start_idx + visible_height).min(filtered_labels.len());
+
+    // Add visible labels
+    for (i, (label, count)) in filtered_labels
+        .iter()
+        .enumerate()
+        .skip(start_idx)
+        .take(end_idx - start_idx)
+    {
+        let list_idx = i + 1; // +1 because index 0 is "Clear filter"
+        let is_cursor = app.label_filter_selected == list_idx;
+        let is_active = app.label_filter.contains(label);
+
+        let style = if is_cursor {
+            Style::default().fg(theme.green).bold()
+        } else if is_active {
+            Style::default().fg(theme.yellow)
+        } else {
+            Style::default().fg(theme.subtext0)
+        };
+
+        let prefix = if is_cursor { "▶ " } else { "  " };
+        let checkbox = if is_active { "[✓] " } else { "[ ] " };
+
+        lines.push(Line::from(vec![
+            Span::styled(prefix, style),
+            Span::styled(checkbox, style),
+            Span::styled(format!("{} ({})", label, count), style),
+        ]));
+    }
+
+    // Show "no matches" if search has no results
+    if filtered_labels.is_empty() && !app.label_filter_search.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  No labels match your search",
+            Style::default().fg(theme.subtext0).italic(),
+        )));
+    }
+
+    // Show scroll indicator if needed
+    if total_items > visible_height {
+        lines.push(Line::from(""));
+        let scroll_info = format!(
+            "Showing {}-{} of {}",
+            app.label_filter_scroll + 1,
+            (app.label_filter_scroll + visible_height).min(total_items),
+            total_items
+        );
+        lines.push(Line::from(Span::styled(
+            scroll_info,
+            Style::default().fg(theme.subtext0).italic(),
+        )));
+    }
+
+    // Show active filters summary
+    if !app.label_filter.is_empty() {
+        lines.push(Line::from(""));
+        let active: Vec<_> = app.label_filter.iter().collect();
+        let summary = if active.len() <= 3 {
+            format!(
+                "Active: {}",
+                active
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        } else {
+            format!("Active: {} labels selected", active.len())
+        };
+        lines.push(Line::from(Span::styled(
+            summary,
+            Style::default().fg(theme.yellow),
+        )));
+    }
+
+    // Add hints
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("↑↓", Style::default().fg(theme.blue).bold()),
+        Span::styled(" nav ", Style::default().fg(theme.subtext0)),
+        Span::styled("Space", Style::default().fg(theme.green).bold()),
+        Span::styled(" toggle ", Style::default().fg(theme.subtext0)),
+        Span::styled("Del", Style::default().fg(theme.red).bold()),
+        Span::styled(" clear all ", Style::default().fg(theme.subtext0)),
+        Span::styled("Enter", Style::default().fg(theme.yellow).bold()),
+        Span::styled(" done", Style::default().fg(theme.subtext0)),
+    ]));
+
+    let content = Text::from(lines);
+
+    let popup = Paragraph::new(content)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme.blue))
+                .title(Span::styled(
+                    " Label Filter ",
+                    Style::default().fg(theme.blue).bold(),
+                ))
+                .style(Style::default().bg(theme.base)),
+        )
+        .alignment(Alignment::Left)
+        .wrap(Wrap { trim: true });
+
+    frame.render_widget(Clear, popup_area);
+    frame.render_widget(popup, popup_area);
+}
+
+/// Get filtered and sorted label list for the popup
+///
+/// Search behavior:
+/// - "alt" = find tools with a label fuzzy-matching "alt"
+/// - "a l t" = find tools with (label matching "a") AND (label matching "l") AND (label matching "t")
+///   where each term can match a DIFFERENT label
+fn get_popup_label_list(app: &App, _db: &Database) -> Vec<(String, usize)> {
+    use crate::tui::app::{LabelFilterSort, fuzzy_match};
+
+    // Helper: check if a tool's labels match the search criteria
+    let tool_matches_search = |tool_labels: &[String]| -> bool {
+        if app.label_filter_search.is_empty() {
+            return true;
+        }
+
+        let search_terms: Vec<&str> = app.label_filter_search.split_whitespace().collect();
+
+        if search_terms.len() == 1 {
+            // Single term: must fuzzy-match at least one label
+            let term = search_terms[0];
+            tool_labels.iter().any(|l| fuzzy_match(term, l).is_some())
+        } else {
+            // Multiple terms: each term must match at least one label (can be different labels)
+            search_terms
+                .iter()
+                .all(|term| tool_labels.iter().any(|l| fuzzy_match(term, l).is_some()))
+        }
+    };
+
+    // Get tools that match:
+    // 1. Currently selected labels (if any)
+    // 2. Search criteria (if any)
+    let matching_tools: Vec<_> = app
+        .all_tools
+        .iter()
+        .filter(|t| {
+            if let Some(labels) = app.cache.labels_cache.get(&t.name) {
+                // Must match all selected labels
+                let matches_selection = app.label_filter.is_empty()
+                    || app.label_filter.iter().all(|l| labels.contains(l));
+                // Must match search criteria
+                let matches_search = tool_matches_search(labels);
+                matches_selection && matches_search
+            } else {
+                false
+            }
+        })
+        .collect();
+
+    // Count labels across matching tools
+    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for tool in &matching_tools {
+        if let Some(labels) = app.cache.labels_cache.get(&tool.name) {
+            for label in labels {
+                *counts.entry(label.clone()).or_insert(0) += 1;
+            }
+        }
+    }
+
+    let mut filtered: Vec<(String, usize)> = counts.into_iter().collect();
+
+    // Sort
+    match app.label_filter_sort {
+        LabelFilterSort::Count => {
+            filtered.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        }
+        LabelFilterSort::Name => {
+            filtered.sort_by(|a, b| a.0.cmp(&b.0));
+        }
+    }
+
+    filtered
+}
+
+/// Render label edit popup
+pub fn render_label_edit_popup(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
+    let popup_area = centered_rect(50, 70, area);
+
+    let tool_name = app.label_edit_tool.as_deref().unwrap_or("Unknown");
+    let suggestions_count = app.label_edit_suggestions.len();
+    let labels_start = 1 + suggestions_count;
+
+    let mut lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("Edit labels for: {}", tool_name),
+            Style::default().fg(theme.text),
+        )),
+        Line::from(""),
+    ];
+
+    // Input field for new label (index 0)
+    let input_selected = app.label_edit_selected == 0;
+    let input_style = if input_selected {
+        Style::default().fg(theme.green).bold()
+    } else {
+        Style::default().fg(theme.subtext0)
+    };
+    let input_prefix = if input_selected { "▶ " } else { "  " };
+    let cursor = if input_selected { "▌" } else { "" };
+    let placeholder = if app.label_edit_input.is_empty() && input_selected {
+        "type to search or add..."
+    } else {
+        ""
+    };
+
+    lines.push(Line::from(vec![
+        Span::styled(input_prefix, input_style),
+        Span::styled("Add: ", input_style),
+        Span::styled(
+            if app.label_edit_input.is_empty() {
+                format!("{}{}", placeholder, cursor)
+            } else {
+                format!("{}{}", app.label_edit_input, cursor)
+            },
+            if app.label_edit_input.is_empty() {
+                Style::default().fg(theme.subtext0).italic()
+            } else {
+                Style::default().fg(theme.text)
+            },
+        ),
+    ]));
+
+    // Show suggestions if any (indices 1..=suggestions_count)
+    if !app.label_edit_suggestions.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "Suggestions:",
+            Style::default().fg(theme.subtext0),
+        )));
+
+        for (i, suggestion) in app.label_edit_suggestions.iter().enumerate() {
+            let idx = i + 1;
+            let is_selected = app.label_edit_selected == idx;
+            let style = if is_selected {
+                Style::default().fg(theme.green).bold()
+            } else {
+                Style::default().fg(theme.blue)
+            };
+            let prefix = if is_selected { "▶ " } else { "  " };
+
+            lines.push(Line::from(vec![
+                Span::styled(prefix, style),
+                Span::styled(suggestion.clone(), style),
+            ]));
+        }
+    }
+
+    // Show existing labels on this tool
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Current labels:",
+        Style::default().fg(theme.subtext0),
+    )));
+
+    if app.label_edit_labels.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  (no labels)",
+            Style::default().fg(theme.subtext0).italic(),
+        )));
+    } else {
+        for (i, label) in app.label_edit_labels.iter().enumerate() {
+            let idx = labels_start + i;
+            let is_selected = app.label_edit_selected == idx;
+            let style = if is_selected {
+                Style::default().fg(theme.yellow).bold()
+            } else {
+                Style::default().fg(theme.teal)
+            };
+            let prefix = if is_selected { "▶ " } else { "  " };
+            let suffix = if is_selected { "  [Del] remove" } else { "" };
+
+            lines.push(Line::from(vec![
+                Span::styled(prefix, style),
+                Span::styled(label.clone(), style),
+                Span::styled(suffix, Style::default().fg(theme.red)),
+            ]));
+        }
+    }
+
+    // Add hints
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("↑↓", Style::default().fg(theme.blue).bold()),
+        Span::styled(" nav ", Style::default().fg(theme.subtext0)),
+        Span::styled("Enter/Tab", Style::default().fg(theme.green).bold()),
+        Span::styled(" add ", Style::default().fg(theme.subtext0)),
+        Span::styled("Del", Style::default().fg(theme.red).bold()),
+        Span::styled(" remove ", Style::default().fg(theme.subtext0)),
+        Span::styled("Esc", Style::default().fg(theme.yellow).bold()),
+        Span::styled(" close", Style::default().fg(theme.subtext0)),
+    ]));
+
+    let content = Text::from(lines);
+
+    let popup = Paragraph::new(content)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme.mauve))
+                .title(Span::styled(
+                    " Edit Labels ",
+                    Style::default().fg(theme.mauve).bold(),
+                ))
+                .style(Style::default().bg(theme.base)),
+        )
+        .alignment(Alignment::Left)
+        .wrap(Wrap { trim: true });
+
+    frame.render_widget(Clear, popup_area);
+    frame.render_widget(popup, popup_area);
+}
