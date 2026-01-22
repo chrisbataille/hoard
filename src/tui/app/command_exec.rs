@@ -369,6 +369,8 @@ impl App {
         self.show_label_filter_popup = !self.show_label_filter_popup;
         if self.show_label_filter_popup {
             self.label_filter_selected = 0;
+            self.label_filter_scroll = 0;
+            self.label_filter_search.clear();
         }
     }
 

@@ -672,24 +672,48 @@ pub fn render_label_filter_popup(
     theme: &Theme,
     area: Rect,
 ) {
-    let popup_area = centered_rect(45, 60, area);
+    let popup_area = centered_rect(50, 70, area);
 
-    // Get all labels with counts
-    let label_counts = db.get_label_counts().unwrap_or_default();
-    let total_items = label_counts.len() + 1; // +1 for "Clear filter" option
-    let visible_height = 10_usize; // Number of visible label items
+    // Get filtered and sorted labels (same logic as event handler)
+    let filtered_labels = get_popup_label_list(app, db);
+    let total_items = filtered_labels.len() + 1; // +1 for "Clear filter" option
+    let visible_height = 10_usize;
 
-    let mut lines = vec![
-        Line::from(""),
-        Line::from(Span::styled(
-            "Select labels to filter by (Space to toggle):",
-            Style::default().fg(theme.text),
-        )),
-        Line::from(""),
-    ];
+    let mut lines = vec![];
+
+    // Search input line
+    lines.push(Line::from(vec![
+        Span::styled("Search: ", Style::default().fg(theme.blue).bold()),
+        Span::styled(
+            if app.label_filter_search.is_empty() {
+                "type to filter...".to_string()
+            } else {
+                app.label_filter_search.clone()
+            },
+            if app.label_filter_search.is_empty() {
+                Style::default().fg(theme.subtext0).italic()
+            } else {
+                Style::default().fg(theme.text)
+            },
+        ),
+        Span::styled("▏", Style::default().fg(theme.green)), // Cursor
+    ]));
+
+    // Sort indicator
+    lines.push(Line::from(vec![
+        Span::styled("Sort: ", Style::default().fg(theme.subtext0)),
+        Span::styled(
+            app.label_filter_sort.label(),
+            Style::default().fg(theme.mauve),
+        ),
+        Span::styled(" (Ctrl+S to toggle)", Style::default().fg(theme.subtext0)),
+    ]));
+
+    lines.push(Line::from(""));
 
     // Add "Clear filter" option at the top (index 0)
-    if app.label_filter_scroll == 0 {
+    let show_clear = app.label_filter_scroll == 0;
+    if show_clear {
         let is_selected = app.label_filter_selected == 0;
         let clear_style = if is_selected {
             Style::default().fg(theme.green).bold()
@@ -697,22 +721,28 @@ pub fn render_label_filter_popup(
             Style::default().fg(theme.subtext0)
         };
         let clear_prefix = if is_selected { "▶ " } else { "  " };
+        let filter_count = app.label_filter.len();
+        let clear_text = if filter_count > 0 {
+            format!("(Clear {} selected)", filter_count)
+        } else {
+            "(No filters active)".to_string()
+        };
         lines.push(Line::from(vec![
             Span::styled(clear_prefix, clear_style),
-            Span::styled("(Clear all filters)", clear_style),
+            Span::styled(clear_text, clear_style),
         ]));
     }
 
-    // Calculate visible range (accounting for scroll)
+    // Calculate visible range (accounting for scroll and "Clear filter" taking slot 0)
     let start_idx = if app.label_filter_scroll == 0 {
         0
     } else {
-        app.label_filter_scroll.saturating_sub(1) // -1 because "Clear filter" takes slot 0
+        app.label_filter_scroll.saturating_sub(1)
     };
-    let end_idx = (start_idx + visible_height).min(label_counts.len());
+    let end_idx = (start_idx + visible_height).min(filtered_labels.len());
 
     // Add visible labels
-    for (i, (label, count)) in label_counts
+    for (i, (label, count)) in filtered_labels
         .iter()
         .enumerate()
         .skip(start_idx)
@@ -738,6 +768,14 @@ pub fn render_label_filter_popup(
             Span::styled(checkbox, style),
             Span::styled(format!("{} ({})", label, count), style),
         ]));
+    }
+
+    // Show "no matches" if search has no results
+    if filtered_labels.is_empty() && !app.label_filter_search.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  No labels match your search",
+            Style::default().fg(theme.subtext0).italic(),
+        )));
     }
 
     // Show scroll indicator if needed
@@ -780,12 +818,12 @@ pub fn render_label_filter_popup(
     // Add hint
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
-        Span::styled("j/k/↑↓", Style::default().fg(theme.blue).bold()),
-        Span::styled(" nav  ", Style::default().fg(theme.subtext0)),
-        Span::styled("Space", Style::default().fg(theme.green).bold()),
-        Span::styled(" toggle  ", Style::default().fg(theme.subtext0)),
+        Span::styled("↑↓", Style::default().fg(theme.blue).bold()),
+        Span::styled(" nav ", Style::default().fg(theme.subtext0)),
+        Span::styled("Tab", Style::default().fg(theme.green).bold()),
+        Span::styled(" toggle ", Style::default().fg(theme.subtext0)),
         Span::styled("Enter", Style::default().fg(theme.yellow).bold()),
-        Span::styled(" done  ", Style::default().fg(theme.subtext0)),
+        Span::styled(" select&close ", Style::default().fg(theme.subtext0)),
         Span::styled("Esc", Style::default().fg(theme.red).bold()),
         Span::styled(" close", Style::default().fg(theme.subtext0)),
     ]));
@@ -808,6 +846,66 @@ pub fn render_label_filter_popup(
 
     frame.render_widget(Clear, popup_area);
     frame.render_widget(popup, popup_area);
+}
+
+/// Get filtered and sorted label list for the popup
+fn get_popup_label_list(app: &App, db: &Database) -> Vec<(String, usize)> {
+    use crate::tui::app::{LabelFilterSort, fuzzy_match};
+
+    // Get labels with counts, filtered by current selection
+    let label_counts = if app.label_filter.is_empty() {
+        db.get_label_counts().unwrap_or_default()
+    } else {
+        // Compute co-occurring labels from tools matching current filter
+        let matching_tools: Vec<_> = app
+            .all_tools
+            .iter()
+            .filter(|t| {
+                if let Some(labels) = app.cache.labels_cache.get(&t.name) {
+                    app.label_filter.iter().all(|l| labels.contains(l))
+                } else {
+                    false
+                }
+            })
+            .collect();
+
+        let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for tool in &matching_tools {
+            if let Some(labels) = app.cache.labels_cache.get(&tool.name) {
+                for label in labels {
+                    *counts.entry(label.clone()).or_insert(0) += 1;
+                }
+            }
+        }
+        counts.into_iter().collect()
+    };
+
+    // Apply fuzzy search filter (space-separated terms must all match)
+    let mut filtered: Vec<(String, usize)> = if app.label_filter_search.is_empty() {
+        label_counts
+    } else {
+        let search_terms: Vec<&str> = app.label_filter_search.split_whitespace().collect();
+        label_counts
+            .into_iter()
+            .filter(|(label, _)| {
+                search_terms
+                    .iter()
+                    .all(|term| fuzzy_match(label, term).is_some())
+            })
+            .collect()
+    };
+
+    // Sort
+    match app.label_filter_sort {
+        LabelFilterSort::Count => {
+            filtered.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        }
+        LabelFilterSort::Name => {
+            filtered.sort_by(|a, b| a.0.cmp(&b.0));
+        }
+    }
+
+    filtered
 }
 
 /// Render label edit popup

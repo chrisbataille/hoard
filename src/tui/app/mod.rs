@@ -39,8 +39,8 @@ pub use traits::SelectableList;
 pub use types::{
     ActionHistory, BackgroundOp, ConfigMenuState, ConfigSection, DiscoverResult, DiscoverSortBy,
     DiscoverSource, ErrorModal, InputMode, InstallOption, InstallResult, InstallTask,
-    LoadingProgress, Notification, NotificationLevel, OutputLine, OutputLineType, PACKAGE_MANAGERS,
-    PendingAction, ReadmePopup, SortBy, StatusMessage, Tab, config_menu_layout,
+    LabelFilterSort, LoadingProgress, Notification, NotificationLevel, OutputLine, OutputLineType,
+    PACKAGE_MANAGERS, PendingAction, ReadmePopup, SortBy, StatusMessage, Tab, config_menu_layout,
 };
 
 /// Tracks an async AI operation running in a background thread
@@ -81,6 +81,8 @@ pub struct App {
     pub show_label_filter_popup: bool, // Show label filter selection popup
     pub label_filter_selected: usize,  // Selected index in label filter popup
     pub label_filter_scroll: usize,    // Scroll offset for label filter popup
+    pub label_filter_search: String,   // Search input for filtering labels
+    pub label_filter_sort: types::LabelFilterSort, // Sort mode for label list
     pub show_label_edit_popup: bool,   // Show label edit popup
     pub label_edit_tool: Option<String>, // Tool being edited in label popup
     pub label_edit_input: String,      // Input field for new label
@@ -217,6 +219,8 @@ impl App {
             show_label_filter_popup: false,
             label_filter_selected: 0,
             label_filter_scroll: 0,
+            label_filter_search: String::new(),
+            label_filter_sort: types::LabelFilterSort::default(),
             show_label_edit_popup: false,
             label_edit_tool: None,
             label_edit_input: String::new(),
