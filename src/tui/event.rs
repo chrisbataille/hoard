@@ -420,11 +420,6 @@ fn handle_label_filter_popup(app: &mut App, key: KeyEvent, db: &Database) {
                 app.label_filter_sort = app.label_filter_sort.toggle();
                 return;
             }
-            // 'c' clears all filters (when not typing in search)
-            if c == 'c' && app.label_filter_search.is_empty() {
-                app.clear_label_filter();
-                return;
-            }
             // Add character to search
             app.label_filter_search.push(c);
             // Reset selection to first label (not "clear") when search changes

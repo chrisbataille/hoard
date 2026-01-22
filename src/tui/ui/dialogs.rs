@@ -822,7 +822,7 @@ pub fn render_label_filter_popup(
         Span::styled(" nav ", Style::default().fg(theme.subtext0)),
         Span::styled("Space", Style::default().fg(theme.green).bold()),
         Span::styled(" toggle ", Style::default().fg(theme.subtext0)),
-        Span::styled("Del/c", Style::default().fg(theme.red).bold()),
+        Span::styled("Del", Style::default().fg(theme.red).bold()),
         Span::styled(" clear all ", Style::default().fg(theme.subtext0)),
         Span::styled("Enter", Style::default().fg(theme.yellow).bold()),
         Span::styled(" done", Style::default().fg(theme.subtext0)),
