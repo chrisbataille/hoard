@@ -85,6 +85,77 @@ pub trait SearchSource: Send + Sync {
 }
 
 // ============================================================================
+// GitHub URL Normalization Helpers
+// ============================================================================
+
+/// Extract the "owner/repo" part from various GitHub URL formats.
+/// Handles formats like:
+/// - https://github.com/owner/repo
+/// - git+https://github.com/owner/repo.git
+/// - git://github.com/owner/repo.git
+/// - github:owner/repo
+/// - ssh://git@github.com/owner/repo.git
+/// - git@github.com:owner/repo.git
+fn extract_github_owner_repo(url: &str) -> Option<String> {
+    let mut s = url.trim();
+
+    // Handle github:owner/repo shorthand
+    if let Some(rest) = s.strip_prefix("github:") {
+        let cleaned = rest.trim_end_matches(".git");
+        if cleaned.contains('/') {
+            return Some(cleaned.to_lowercase());
+        }
+    }
+
+    // Strip common prefixes one by one
+    if let Some(rest) = s.strip_prefix("git+") {
+        s = rest;
+    }
+    if let Some(rest) = s.strip_prefix("ssh://") {
+        s = rest;
+    }
+    if let Some(rest) = s.strip_prefix("git://") {
+        s = rest;
+    }
+    if let Some(rest) = s.strip_prefix("https://") {
+        s = rest;
+    }
+    if let Some(rest) = s.strip_prefix("http://") {
+        s = rest;
+    }
+    if let Some(rest) = s.strip_prefix("git@") {
+        s = rest;
+    }
+
+    // Now should be: github.com/owner/repo or github.com:owner/repo
+    let path = s
+        .strip_prefix("github.com/")
+        .or_else(|| s.strip_prefix("github.com:"))?;
+
+    // Remove .git suffix and any trailing slashes
+    let cleaned = path.trim_end_matches(".git").trim_end_matches('/');
+
+    // Extract owner/repo (first two path segments)
+    let parts: Vec<&str> = cleaned.split('/').take(2).collect();
+    if parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty() {
+        Some(format!("{}/{}", parts[0], parts[1]).to_lowercase())
+    } else {
+        None
+    }
+}
+
+/// Check if two URLs point to the same GitHub repository
+fn github_urls_match(url1: &str, url2: &str) -> bool {
+    match (
+        extract_github_owner_repo(url1),
+        extract_github_owner_repo(url2),
+    ) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
+}
+
+// ============================================================================
 // crates.io Search
 // ============================================================================
 
@@ -213,6 +284,53 @@ fn crate_has_binaries(name: &str) -> Option<bool> {
     }
 }
 
+/// Check if a crate exists, has binaries, AND its repository matches the given GitHub URL.
+/// Used by GitHubSearch to validate that a crate with the same name as a repo
+/// is actually the same project.
+/// Returns Some(true) if crate exists, has binaries, and repo matches
+/// Returns Some(false) if crate exists but has no binaries
+/// Returns None if crate doesn't exist or repo doesn't match
+fn crate_matches_github_repo(name: &str, github_url: &str) -> Option<bool> {
+    let url = format!("https://crates.io/api/v1/crates/{}", name);
+
+    let response = match HTTP_AGENT.get(&url).call() {
+        Ok(resp) => resp,
+        Err(ureq::Error::StatusCode(404)) => {
+            return None;
+        }
+        Err(_) => {
+            // Network error - be conservative, don't assume match
+            return None;
+        }
+    };
+
+    let Ok(data): Result<serde_json::Value, _> = response.into_body().read_json() else {
+        return None;
+    };
+
+    // Check if the crate's repository matches the GitHub URL
+    if let Some(repo_url) = data["crate"]["repository"].as_str() {
+        if !github_urls_match(repo_url, github_url) {
+            // Repository doesn't match - this is a different project
+            return None;
+        }
+    } else {
+        // No repository URL in crate metadata - can't verify, skip
+        return None;
+    }
+
+    // Repository matches, now check for binaries
+    let empty_vec = vec![];
+    let versions = data["versions"].as_array().unwrap_or(&empty_vec);
+
+    if let Some(latest) = versions.first() {
+        let bin_names = latest["bin_names"].as_array().unwrap_or(&empty_vec);
+        Some(!bin_names.is_empty())
+    } else {
+        Some(true)
+    }
+}
+
 // ============================================================================
 // npm Search
 // ============================================================================
@@ -326,6 +444,50 @@ fn npm_package_has_bin(name: &str) -> bool {
         version_data.get("bin").is_some()
     } else {
         true // Can't determine, include it
+    }
+}
+
+/// Check if an npm package exists, has binaries, AND its repository matches the given GitHub URL.
+/// Used by GitHubSearch to validate that an npm package with the same name as a repo
+/// is actually the same project.
+fn npm_package_matches_github_repo(name: &str, github_url: &str) -> bool {
+    let url = format!("https://registry.npmjs.org/{}", urlencoding::encode(name));
+
+    let response = match HTTP_AGENT.get(&url).call() {
+        Ok(resp) => resp,
+        Err(_) => {
+            return false;
+        }
+    };
+
+    let Ok(data): Result<serde_json::Value, _> = response.into_body().read_json() else {
+        return false;
+    };
+
+    // Check if the package's repository matches the GitHub URL
+    // npm repository can be an object with url field or a string
+    let repo_url = if let Some(repo_obj) = data["repository"].as_object() {
+        repo_obj.get("url").and_then(|u| u.as_str())
+    } else {
+        data["repository"].as_str()
+    };
+
+    let Some(repo_url) = repo_url else {
+        // No repository URL - can't verify, skip
+        return false;
+    };
+
+    if !github_urls_match(repo_url, github_url) {
+        // Repository doesn't match - this is a different project
+        return false;
+    }
+
+    // Repository matches, now check for binaries
+    let latest_version = data["dist-tags"]["latest"].as_str().unwrap_or("");
+    if let Some(version_data) = data["versions"].get(latest_version) {
+        version_data.get("bin").is_some()
+    } else {
+        false
     }
 }
 
@@ -492,6 +654,107 @@ fn pypi_package_has_cli(name: &str) -> bool {
     }
 
     // Check requires_dist for typical CLI dependencies like click, argparse, typer
+    if let Some(requires) = info["requires_dist"].as_array() {
+        for req in requires {
+            if let Some(r) = req.as_str() {
+                let r_lower = r.to_lowercase();
+                if r_lower.starts_with("click")
+                    || r_lower.starts_with("typer")
+                    || r_lower.starts_with("fire")
+                    || r_lower.starts_with("argcomplete")
+                {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
+/// Check if a PyPI package exists, has CLI indicators, AND its repository matches the given GitHub URL.
+/// Used by GitHubSearch to validate that a PyPI package with the same name as a repo
+/// is actually the same project.
+fn pypi_package_matches_github_repo(name: &str, github_url: &str) -> bool {
+    let url = format!("https://pypi.org/pypi/{}/json", urlencoding::encode(name));
+
+    let response = match HTTP_AGENT.get(&url).call() {
+        Ok(resp) => resp,
+        Err(_) => {
+            return false;
+        }
+    };
+
+    let Ok(data): Result<serde_json::Value, _> = response.into_body().read_json() else {
+        return false;
+    };
+
+    let info = &data["info"];
+
+    // Check if any project URL matches the GitHub URL
+    // PyPI stores URLs in project_urls with various keys like "Repository", "Source", "GitHub", etc.
+    let mut repo_matches = false;
+
+    if let Some(urls) = info["project_urls"].as_object() {
+        for (key, value) in urls {
+            let key_lower = key.to_lowercase();
+            // Check keys that typically contain repository URLs
+            let is_repo_key = key_lower.contains("repository")
+                || key_lower.contains("source")
+                || key_lower.contains("github")
+                || key_lower.contains("code")
+                || key_lower.contains("homepage");
+
+            if is_repo_key
+                && let Some(url_str) = value.as_str()
+                && github_urls_match(url_str, github_url)
+            {
+                repo_matches = true;
+                break;
+            }
+        }
+    }
+
+    // Also check the homepage field
+    if !repo_matches
+        && let Some(homepage) = info["home_page"].as_str()
+        && github_urls_match(homepage, github_url)
+    {
+        repo_matches = true;
+    }
+
+    if !repo_matches {
+        // Repository doesn't match - this is a different project
+        return false;
+    }
+
+    // Repository matches, now check for CLI indicators
+    // Check classifiers for "Environment :: Console"
+    if let Some(classifiers) = info["classifiers"].as_array() {
+        for classifier in classifiers {
+            if let Some(c) = classifier.as_str()
+                && (c.contains("Environment :: Console") || c.contains("Command-line"))
+            {
+                return true;
+            }
+        }
+    }
+
+    // Check if summary/description mentions CLI
+    let summary = info["summary"].as_str().unwrap_or("");
+    let description = info["description"].as_str().unwrap_or("");
+    let combined = format!("{} {}", summary, description).to_lowercase();
+
+    if combined.contains("command-line")
+        || combined.contains("command line")
+        || combined.contains(" cli ")
+        || combined.contains("cli tool")
+        || combined.contains("cli for")
+    {
+        return true;
+    }
+
+    // Check requires_dist for typical CLI dependencies
     if let Some(requires) = info["requires_dist"].as_array() {
         for req in requires {
             if let Some(r) = req.as_str() {
@@ -678,9 +941,10 @@ impl SearchSource for GitHubSearch {
                         // Determine source and install command based on language
                         let (source, install_cmd) = match language.to_lowercase().as_str() {
                             "rust" => {
-                                match crate_has_binaries(&name) {
+                                let github_url = url.as_ref()?;
+                                match crate_matches_github_repo(&name, github_url) {
                                     Some(true) => {
-                                        // Exists on crates.io with binaries
+                                        // Exists on crates.io with binaries and repo matches
                                         (
                                             DiscoverSource::CratesIo,
                                             format!("cargo install {}", name),
@@ -691,24 +955,25 @@ impl SearchSource for GitHubSearch {
                                         return None;
                                     }
                                     None => {
-                                        // Not on crates.io - offer git install if we have a URL
-                                        let git_url = url.as_ref()?;
+                                        // Not on crates.io or repo doesn't match - offer git install
                                         (
                                             DiscoverSource::GitHub,
-                                            format!("cargo install --git {}", git_url),
+                                            format!("cargo install --git {}", github_url),
                                         )
                                     }
                                 }
                             }
                             "python" => {
-                                if pypi_package_has_cli(&name) {
+                                let github_url = url.as_ref()?;
+                                if pypi_package_matches_github_repo(&name, github_url) {
                                     (DiscoverSource::PyPI, format!("pip install {}", name))
                                 } else {
                                     return None;
                                 }
                             }
                             "javascript" | "typescript" => {
-                                if npm_package_has_bin(&name) {
+                                let github_url = url.as_ref()?;
+                                if npm_package_matches_github_repo(&name, github_url) {
                                     (DiscoverSource::Npm, format!("npm install -g {}", name))
                                 } else {
                                     return None;
@@ -1051,5 +1316,84 @@ mod tests {
 
         assert_eq!(result.stars, Some(100));
         assert_eq!(result.url, Some("https://example.com".to_string()));
+    }
+
+    #[test]
+    fn test_extract_github_owner_repo() {
+        // Standard HTTPS URL
+        assert_eq!(
+            extract_github_owner_repo("https://github.com/owner/repo"),
+            Some("owner/repo".to_string())
+        );
+
+        // With .git suffix
+        assert_eq!(
+            extract_github_owner_repo("https://github.com/owner/repo.git"),
+            Some("owner/repo".to_string())
+        );
+
+        // git+ prefix (common in npm)
+        assert_eq!(
+            extract_github_owner_repo("git+https://github.com/owner/repo.git"),
+            Some("owner/repo".to_string())
+        );
+
+        // SSH URL
+        assert_eq!(
+            extract_github_owner_repo("git@github.com:owner/repo.git"),
+            Some("owner/repo".to_string())
+        );
+
+        // github: shorthand
+        assert_eq!(
+            extract_github_owner_repo("github:owner/repo"),
+            Some("owner/repo".to_string())
+        );
+
+        // Case insensitive
+        assert_eq!(
+            extract_github_owner_repo("https://github.com/Owner/Repo"),
+            Some("owner/repo".to_string())
+        );
+
+        // With trailing slash
+        assert_eq!(
+            extract_github_owner_repo("https://github.com/owner/repo/"),
+            Some("owner/repo".to_string())
+        );
+
+        // Invalid URLs
+        assert_eq!(extract_github_owner_repo("not-a-url"), None);
+        assert_eq!(
+            extract_github_owner_repo("https://gitlab.com/owner/repo"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_github_urls_match() {
+        // Same repo, different formats
+        assert!(github_urls_match(
+            "https://github.com/owner/repo",
+            "git+https://github.com/owner/repo.git"
+        ));
+
+        // Case insensitive
+        assert!(github_urls_match(
+            "https://github.com/Owner/Repo",
+            "https://github.com/owner/repo"
+        ));
+
+        // Different repos
+        assert!(!github_urls_match(
+            "https://github.com/owner1/repo",
+            "https://github.com/owner2/repo"
+        ));
+
+        // npm happy vs happy-coder case (the bug we're fixing)
+        assert!(!github_urls_match(
+            "git+https://github.com/franciscop/happy.git",
+            "https://github.com/slopus/happy"
+        ));
     }
 }
