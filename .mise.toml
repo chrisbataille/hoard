@@ -1,0 +1,26 @@
+# mise configuration for hoards
+# https://mise.jdx.dev/
+
+[tools]
+# Pin Rust version for consistent builds
+rust = "1.92.0"
+
+[env]
+# Ensure consistent locale for builds
+LANG = "en_US.UTF-8"
+
+[tasks.build]
+run = "cargo build"
+description = "Build the project"
+
+[tasks.test]
+run = "cargo test"
+description = "Run tests"
+
+[tasks.check]
+run = "cargo fmt --check && cargo clippy -- -D warnings && cargo test"
+description = "Run all checks (format, lint, test)"
+
+[tasks.install]
+run = "cargo install --path ."
+description = "Install hoards locally"

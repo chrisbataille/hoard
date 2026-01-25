@@ -8,12 +8,26 @@ Hoards is an AI-powered CLI tool manager with usage analytics, multi-source trac
 
 ## Development
 
+### Setup (mise)
+This project uses [mise](https://mise.jdx.dev/) for tool version management.
+
+```bash
+mise install          # Install pinned Rust version (1.92.0)
+mise trust            # Trust the .mise.toml config (first time only)
+```
+
 ### Build & Test
 ```bash
+# Using mise tasks (recommended)
+mise run build        # cargo build
+mise run test         # cargo test
+mise run check        # fmt + clippy + test
+mise run install      # cargo install --path .
+
+# Or direct cargo commands
 cargo build
 cargo test
 cargo clippy
-cargo install --path .
 ```
 
 ### Pre-Commit Hooks
@@ -207,8 +221,7 @@ fn test_fetch_description_http_error() {
 ```
 
 ### Before Merging Checklist
-- [ ] `cargo test` passes
-- [ ] `cargo clippy` has no warnings
+- [ ] `mise run check` passes (or `cargo fmt --check && cargo clippy -- -D warnings && cargo test`)
 - [ ] New code has tests
 - [ ] Security-sensitive code has injection tests
 
